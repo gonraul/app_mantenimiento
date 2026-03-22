@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "986722675763",
+    "project_id": "austral-matenimiento",
+    "storage_bucket": "austral-matenimiento.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:986722675763:android:c7eb9948751b28c5ac4746",
+        "android_client_info": {
+          "package_name": "com.example.app_mantenimiento"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiZ1Ssl2t1Hs3LDNwKiOFaod85Ooxvt7A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:986722675763:android:ba0479d17a2c170eac4746",
+        "android_client_info": {
+          "package_name": "com.example.mi_app_firebase"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiZ1Ssl2t1Hs3LDNwKiOFaod85Ooxvt7A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:986722675763:android:8618fe20ba039ff2ac4746",
+        "android_client_info": {
+          "package_name": "com.example.myapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiZ1Ssl2t1Hs3LDNwKiOFaod85Ooxvt7A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
