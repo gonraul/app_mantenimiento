@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/task_service.dart';
 import '../models/task_model.dart';
 import '../theme/app_theme.dart';
+import 'detalle_equipo_page.dart';
 import 'upload_content_screen.dart';
-import 'visor_imagen_screen.dart';
-import 'visor_video_screen.dart';
 
 class TasksPage extends StatefulWidget {
   const TasksPage({super.key});
@@ -308,36 +308,31 @@ class _TasksPageState extends State<TasksPage> {
                             onTap: () async {
                               final navigator = Navigator.of(context);
                               final messenger = ScaffoldMessenger.of(context);
-                              final url = await _taskService.getMediaUrl(
-                                task.mediaUrl,
-                              );
-                              if (url.isNotEmpty) {
-                                if (task.mediaType == 'video') {
-                                  navigator.push(
-                                    MaterialPageRoute(
-                                      builder: (_) => VisorVideoScreen(
-                                        videoUrl: url,
-                                        titulo: task.title,
-                                      ),
-                                    ),
-                                  );
-                                } else {
-                                  navigator.push(
-                                    MaterialPageRoute(
-                                      builder: (_) => VisorImagenScreen(
-                                        imageUrl: url,
-                                        titulo: task.title,
-                                      ),
-                                    ),
-                                  );
-                                }
-                              } else {
+                              final doc = await FirebaseFirestore.instance
+                                  .collection('pdfs')
+                                  .doc(task.id)
+                                  .get();
+
+                              if (!mounted) return;
+
+                              if (!doc.exists || doc.data() == null) {
                                 messenger.showSnackBar(
                                   const SnackBar(
-                                    content: Text('Error al cargar el archivo'),
+                                    content: Text(
+                                      'No se encontro el equipo seleccionado',
+                                    ),
                                   ),
                                 );
+                                return;
                               }
+
+                              navigator.push(
+                                MaterialPageRoute(
+                                  builder: (_) => DetalleEquipoPage(
+                                    equipoDoc: doc,
+                                  ),
+                                ),
+                              );
                             },
                           ),
                         );

@@ -9,6 +9,9 @@ class TaskModel {
   final String status; // pendiente, en_progreso, completado
   final String priority; // alta, media, baja
   final String location;
+  final String piso;
+  final String area;
+  final String areaTecnica;
   final List<String> tags; // Lista de etiquetas para búsqueda
 
   TaskModel({
@@ -22,6 +25,9 @@ class TaskModel {
     required this.status,
     required this.priority,
     required this.location,
+    required this.piso,
+    required this.area,
+    required this.areaTecnica,
     required this.tags,
   });
 
@@ -44,6 +50,9 @@ class TaskModel {
       status: data['status'] ?? 'pendiente',
       priority: data['priority'] ?? 'media',
       location: data['location'] ?? '',
+      piso: data['piso'] ?? '',
+      area: data['area'] ?? '',
+      areaTecnica: data['areaTecnica'] ?? '',
       tags: List<String>.from(data['tags'] ?? []),
     );
   }

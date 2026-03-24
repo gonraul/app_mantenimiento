@@ -6,7 +6,12 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class UploadContentScreen extends StatefulWidget {
-  const UploadContentScreen({super.key});
+  const UploadContentScreen({
+    super.key,
+    this.initialTopicId,
+  });
+
+  final String? initialTopicId;
 
   @override
   State<UploadContentScreen> createState() => _UploadContentScreenState();
@@ -18,20 +23,39 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
 
   static const String _newTopicOptionValue = '__create_new_topic__';
 
-  // Solo para tema nuevo
+  // Campos solo para documento nuevo
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _pisoController = TextEditingController();
+  final TextEditingController _areaController = TextEditingController();
+  final TextEditingController _areaTecnicaController = TextEditingController();
+  final TextEditingController _tagsController = TextEditingController();
 
   PlatformFile? _selectedFile;
   bool _isUploading = false;
-  String _selectedTopicId = _newTopicOptionValue;
+  late String _selectedTopicId;
 
-  bool get _isNewTopic => _selectedTopicId == _newTopicOptionValue;
+  bool get _topicLocked =>
+      widget.initialTopicId != null && widget.initialTopicId!.trim().isNotEmpty;
+
+  bool get _isNewTopic => !_topicLocked && _selectedTopicId == _newTopicOptionValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedTopicId = _topicLocked
+        ? widget.initialTopicId!.trim()
+        : _newTopicOptionValue;
+  }
 
   @override
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _pisoController.dispose();
+    _areaController.dispose();
+    _areaTecnicaController.dispose();
+    _tagsController.dispose();
     super.dispose();
   }
 
@@ -121,7 +145,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
 
     if (_isNewTopic && _titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('El titulo del tema es obligatorio')),
+        const SnackBar(content: Text('El titulo del equipo es obligatorio')),
       );
       return;
     }
@@ -129,10 +153,13 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     setState(() => _isUploading = true);
 
     try {
+      final docRef = _isNewTopic
+          ? _firestore.collection('pdfs').doc()
+          : _firestore.collection('pdfs').doc(_selectedTopicId);
+
       final now = DateTime.now().millisecondsSinceEpoch;
       final safeName = _sanitizeFileName(file.name);
-      final docIdForPath = _isNewTopic ? 'nuevo_tema' : _selectedTopicId;
-      final storagePath = 'mantenimiento/$docIdForPath/${now}_$safeName';
+      final storagePath = 'pdfs/${docRef.id}/${now}_$safeName';
       final ref = _storage.ref(storagePath);
 
       await ref.putData(file.bytes!);
@@ -147,21 +174,42 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       };
 
       if (_isNewTopic) {
-        await _firestore.collection('mantenimiento').add({
+        final rawTags = _tagsController.text.trim();
+        final tags = rawTags.isEmpty
+            ? <String>[]
+            : rawTags
+                .split(',')
+                .map((t) => t.trim().toLowerCase())
+                .where((t) => t.isNotEmpty)
+                .toList();
+
+        await docRef.set({
           'title': _titleController.text.trim(),
           'description': _descriptionController.text.trim(),
-          'documents': [fileEntry],
+          'piso': _pisoController.text.trim(),
+          'area': _areaController.text.trim(),
+          'areaTecnica': _areaTecnicaController.text.trim(),
+          'tags': tags,
+          'status': 'pendiente',
+          'priority': 'media',
+          'location': '',
+          'archivos': [fileUrl],
           'createdAt': FieldValue.serverTimestamp(),
         });
       } else {
-        await _firestore
-            .collection('mantenimiento')
-            .doc(_selectedTopicId)
-            .update({
-              'documents': FieldValue.arrayUnion([fileEntry]),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+        await docRef.update({
+          'archivos': FieldValue.arrayUnion([fileUrl]),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
       }
+
+      await docRef.collection('media').add({
+        ...fileEntry,
+        'storagePath': storagePath,
+        'order': 0,
+        'timestamp': FieldValue.serverTimestamp(),
+        'created_at': FieldValue.serverTimestamp(),
+      });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -184,9 +232,9 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: const Text(
-          'Subir contenido',
-          style: TextStyle(color: Colors.white),
+        title: Text(
+          _isNewTopic ? 'Nuevo equipo' : 'Agregar archivo',
+          style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -198,11 +246,11 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFF2E3192), Color(0xFF00BF6F)],
+              colors: [AppColors.azulAustral, AppColors.verdeAustral],
             ),
           ),
           child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: _firestore.collection('mantenimiento').snapshots(),
+            stream: _firestore.collection('pdfs').orderBy('title').snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(child: Text('Error: ${snapshot.error}'));
@@ -215,26 +263,6 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
               }
 
               final docs = snapshot.data?.docs ?? [];
-              final topicItems = <DropdownMenuItem<String>>[
-                const DropdownMenuItem<String>(
-                  value: _newTopicOptionValue,
-                  child: Text('+ Crear nuevo tema'),
-                ),
-                ...docs.map(
-                  (doc) => DropdownMenuItem<String>(
-                    value: doc.id,
-                    child: Text(
-                      (doc.data()['title'] as String?) ?? '(sin titulo)',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ];
-
-              final validValues = topicItems.map((e) => e.value).toSet();
-              final currentValue = validValues.contains(_selectedTopicId)
-                  ? _selectedTopicId
-                  : _newTopicOptionValue;
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -242,52 +270,80 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 86),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey(currentValue),
-                      initialValue: currentValue,
-                      isExpanded: true,
-                      dropdownColor: Colors.white,
-                      decoration: _inputDecoration(label: 'Seleccionar tema'),
-                      items: topicItems,
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() {
-                          _selectedTopicId = value;
-                        });
-                      },
-                    ),
-
-                    const SizedBox(height: 8),
-                    Text(
-                      'Tema actual: ${_selectedTopicLabel(docs)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-
-                    if (docs.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 10),
+                    if (_topicLocked)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(15),
+                        ),
                         child: Text(
-                          'No hay temas cargados aun. Se creara uno nuevo.',
-                          style: TextStyle(color: Colors.white),
+                          'Equipo: ${_selectedTopicLabel(docs)}',
+                          style: const TextStyle(
+                            color: AppColors.azulAustral,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
 
                     if (_isNewTopic) ...[
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 16),
+                      _SectionLabel(label: 'Datos del equipo'),
+                      const SizedBox(height: 10),
                       TextField(
                         controller: _titleController,
-                        decoration: _inputDecoration(
-                          label: 'Titulo del tema *',
-                        ),
+                        decoration: _inputDecoration(label: 'Titulo *'),
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: _descriptionController,
                         maxLines: 2,
                         decoration: _inputDecoration(label: 'Descripcion'),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _pisoController,
+                              decoration: _inputDecoration(label: 'Piso'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _areaController,
+                              decoration: _inputDecoration(label: 'Area'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _areaTecnicaController,
+                        decoration: _inputDecoration(label: 'Area tecnica'),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _tagsController,
+                        decoration: _inputDecoration(
+                          label: 'Palabras clave',
+                          hint: 'Ej: bomba, compresor, electrico',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          'Separa las palabras con comas.',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                     ],
 
@@ -339,6 +395,28 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 2),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 14,
+          letterSpacing: 0.4,
         ),
       ),
     );
