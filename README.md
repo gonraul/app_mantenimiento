@@ -1,17 +1,37 @@
 # app_mantenimiento
 
-A new Flutter project.
+Aplicacion Flutter para mantenimiento hospitalario con Firebase.
 
-## Getting Started
+## Configuracion local de Firebase
 
-This project is a starting point for a Flutter application.
+Los archivos de configuracion Firebase no se versionan en este repositorio.
+Para ejecutar la app localmente, regeneralos en tu maquina.
 
-A few resources to get you started if this is your first Flutter project:
+### Archivos que deben existir localmente
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- lib/firebase_options.dart
+- android/app/google-services.json
+- firebase.json
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### Regeneracion recomendada
+
+1. Instala FlutterFire CLI si todavia no la tenes.
+2. Inicia sesion en Firebase si hace falta.
+3. Desde la raiz del proyecto ejecuta:
+
+```bash
+flutterfire configure --project=austral-matenimiento --platforms=android,web
+```
+
+Si vas a configurar iOS o macOS mas adelante, volve a ejecutar FlutterFire CLI
+incluyendo esas plataformas para generar tambien sus archivos nativos.
+
+### Verificacion
+
+Despues de regenerar los archivos, valida el entorno con:
+
+```bash
+flutter doctor
+flutter pub get
+flutter run
+```
