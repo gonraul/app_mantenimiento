@@ -1,12 +1,17 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
-import '../models/documento_model.dart';
+import '../models/equipment.dart';
+import 'equipment_repository.dart';
 
 class DocumentoService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final EquipmentRepository _repository;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
+  DocumentoService({EquipmentRepository? repository})
+    : _repository = repository ?? EquipmentRepository();
+
+  /// Obtiene la URL de descarga de un archivo en Firebase Storage.
+  /// Soporta URLs directas (http/https), referencias gs://, y rutas relativas.
   Future<String> getMediaUrl(String storagePathOrUrl) async {
     if (storagePathOrUrl.startsWith('http://') ||
         storagePathOrUrl.startsWith('https://')) {
@@ -23,44 +28,23 @@ class DocumentoService {
     }
   }
 
+  /// Alias para getMediaUrl mantenido por compatibilidad.
   Future<String> getImageUrl(String storagePath) => getMediaUrl(storagePath);
 
-  Stream<List<DocumentoModel>> buscarPorTag(String tag) async* {
-    Query query;
-    if (tag.isEmpty) {
-      query = _firestore.collection('pdfs');
-    } else {
-      query = _firestore
-          .collection('pdfs')
-          .where('tags', arrayContains: tag.toLowerCase());
-    }
-
-    await for (final snapshot in query.snapshots()) {
-      final documentos = await Future.wait(
-        snapshot.docs.map((doc) async {
-          final mediaSnapshot = await doc.reference.collection('media').get();
-          final orderedMedia = mediaSnapshot.docs.toList()
-            ..sort((a, b) {
-              final orderA = (a.data()['order'] as num?)?.toInt() ?? 0;
-              final orderB = (b.data()['order'] as num?)?.toInt() ?? 0;
-              return orderA.compareTo(orderB);
-            });
-
-          final firstMedia =
-              orderedMedia.isNotEmpty ? orderedMedia.first.data() : <String, dynamic>{};
-
-          return DocumentoModel.fromFirestore(
-            doc.data() as Map<String, dynamic>,
-            doc.id,
-            mediaUrl: firstMedia['url'] ?? '',
-            mediaType: firstMedia['type'] ?? 'image',
-            mediaCaption: firstMedia['caption'] ?? '',
-            mediaOrder: (firstMedia['order'] as num?)?.toInt() ?? 0,
-          );
-        }),
-      );
-
-      yield documentos;
-    }
+  /// DEPRECATED: Usar BusquedaViewModel con SearchEquipmentsUseCase en su lugar.
+  /// Mantiene búsqueda en colección 'equipos' para compatibilidad con código legacy.
+  @Deprecated('Use BusquedaViewModel instead')
+  Stream<List<Equipment>> buscarPorTag(String tag) async* {
+    yield* _repository.getEquipments().map((equipments) {
+      if (tag.isEmpty) {
+        return equipments;
+      }
+      final normalizedTag = tag.toLowerCase();
+      return equipments
+          .where(
+            (eq) => eq.tags.any((t) => t.toLowerCase().contains(normalizedTag)),
+          )
+          .toList();
+    });
   }
 }

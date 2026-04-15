@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../services/task_service.dart';
-import '../models/task_model.dart';
+
+import '../models/equipment.dart';
+import '../services/equipment_repository.dart';
 import '../theme/app_theme.dart';
+import '../use_cases/get_equipments_stream_use_case.dart';
+import '../use_cases/search_equipments_use_case.dart';
+import '../view_models/tasks_view_model.dart';
 import 'detalle_equipo_page.dart';
 import 'upload_content_screen.dart';
 
@@ -14,13 +17,33 @@ class TasksPage extends StatefulWidget {
 }
 
 class _TasksPageState extends State<TasksPage> {
-  final TextEditingController _searchController = TextEditingController();
-  String _searchTerm = '';
-  final TaskService _taskService = TaskService();
+  static const double _maxContentWidth = 900;
 
-  IconData _getTaskIcon(TaskModel task) {
-    final text = '${task.title} ${task.description} ${task.tags.join(' ')}'
-        .toLowerCase();
+  final TextEditingController _searchController = TextEditingController();
+  late final TasksViewModel _viewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    final repository = EquipmentRepository();
+    _viewModel = TasksViewModel(
+      getEquipmentsStream: GetEquipmentsStreamUseCase(repository),
+      searchEquipments: const SearchEquipmentsUseCase(),
+    );
+    _viewModel.start();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _viewModel.dispose();
+    super.dispose();
+  }
+
+  IconData _getTaskIcon(Equipment equipment) {
+    final text =
+        '${equipment.title} ${equipment.description} ${equipment.tags.join(' ')}'
+            .toLowerCase();
 
     if (text.contains('electric') ||
         text.contains('tablero') ||
@@ -91,7 +114,6 @@ class _TasksPageState extends State<TasksPage> {
               builder: (context) => IconButton(
                 icon: const Icon(Icons.menu, color: AppColors.backgroundWhite),
                 onPressed: () {
-                  // Mantiene la acción actual sin depender del contexto del AppBar
                   Scaffold.of(context).openDrawer();
                 },
               ),
@@ -144,204 +166,170 @@ class _TasksPageState extends State<TasksPage> {
         height: double.infinity,
         decoration: const BoxDecoration(gradient: AppColors.australGradient),
         child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 90),
-              // Barra de Búsqueda Mejorada
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 15, 16, 0),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(30.0),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 14,
-                        offset: const Offset(0, 4),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+              child: Column(
+                children: [
+                  const SizedBox(height: 90),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 15, 16, 0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(30.0),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: const Color(0xFFF5F7FA),
-                      suffixIcon: Container(
-                        margin: const EdgeInsets.only(right: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.azulAustral,
-                          shape: BoxShape.circle,
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: const Color(0xFFF5F7FA),
+                          suffixIcon: Container(
+                            margin: const EdgeInsets.only(right: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.azulAustral,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.search,
+                              color: AppColors.backgroundWhite,
+                              size: 20,
+                            ),
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                          hintText: 'Buscar por palabra clave...',
+                          hintStyle: TextStyle(color: Colors.grey[500]),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 14,
+                          ),
                         ),
-                        child: const Icon(
-                          Icons.search,
-                          color: AppColors.backgroundWhite,
-                          size: 20,
-                        ),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: BorderSide.none,
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: BorderSide.none,
-                      ),
-                      hintText: 'Buscar por palabra clave...',
-                      hintStyle: TextStyle(color: Colors.grey[500]),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 14,
+                        onChanged: _viewModel.setSearchTerm,
                       ),
                     ),
-                    onChanged: (value) {
-                      setState(() {
-                        _searchTerm = value.trim().toLowerCase();
-                      });
-                    },
                   ),
-                ),
-              ),
-              const SizedBox(height: 14),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: AnimatedBuilder(
+                      animation: _viewModel,
+                      builder: (context, _) {
+                        if (_viewModel.errorMessage != null) {
+                          return Center(
+                            child: Text('Error: ${_viewModel.errorMessage}'),
+                          );
+                        }
+                        if (_viewModel.isLoading) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
 
-              // Lista de Tareas Mejorada (Cards)
-              Expanded(
-                child: StreamBuilder<List<TaskModel>>(
-                  stream: _taskService.getTasks(),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return Center(child: Text('Error: ${snapshot.error}'));
-                    }
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                      return const Center(
-                        child: Text('No se encontraron tareas'),
-                      );
-                    }
-                    // Filtrar tareas por búsqueda en título, descripción o etiquetas
-                    final tasks = snapshot.data!
-                        .where(
-                          (task) =>
-                              task.title.toLowerCase().contains(_searchTerm) ||
-                              task.description.toLowerCase().contains(
-                                _searchTerm,
-                              ) ||
-                              task.tags.any(
-                                (tag) =>
-                                    tag.toLowerCase().contains(_searchTerm),
-                              ),
-                        )
-                        .toList();
-                    if (tasks.isEmpty) {
-                      return const Center(
-                        child: Text('No se encontraron tareas'),
-                      );
-                    }
-                    return ListView.separated(
-                      itemCount: tasks.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 0),
-                      itemBuilder: (context, index) {
-                        final task = tasks[index];
-                        return Card(
-                          color: AppColors.backgroundWhite,
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 16.0,
-                            vertical: 8.0,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          elevation: 2,
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(16),
-                            leading: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE8EAF6),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Icon(
-                                _getTaskIcon(task),
-                                color: AppColors.azulAustral,
-                                size: 22,
-                              ),
-                            ),
-                            title: Text(
-                              task.title,
-                              style: const TextStyle(
-                                color: AppColors.azulAustral,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                task.description,
-                                style: const TextStyle(
-                                  color: AppColors.darkGray,
-                                ),
-                              ),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _getPriorityIcon(task.priority),
-                                  color: AppColors.verdeAustral,
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 8),
-                                Icon(
-                                  Icons.arrow_forward_ios,
-                                  size: 16,
-                                  color: AppColors.verdeAustral,
-                                ),
-                              ],
-                            ),
-                            onTap: () async {
-                              final navigator = Navigator.of(context);
-                              final messenger = ScaffoldMessenger.of(context);
-                              final doc = await FirebaseFirestore.instance
-                                  .collection('pdfs')
-                                  .doc(task.id)
-                                  .get();
+                        final equipments = _viewModel.equipments;
+                        if (equipments.isEmpty) {
+                          return const Center(
+                            child: Text('No se encontraron tareas'),
+                          );
+                        }
 
-                              if (!mounted) return;
-
-                              if (!doc.exists || doc.data() == null) {
-                                messenger.showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'No se encontro el equipo seleccionado',
+                        return ListView.separated(
+                          itemCount: equipments.length,
+                          separatorBuilder: (context, index) =>
+                              const SizedBox(height: 0),
+                          itemBuilder: (context, index) {
+                            final equipment = equipments[index];
+                            return Card(
+                              color: AppColors.backgroundWhite,
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 16.0,
+                                vertical: 8.0,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              elevation: 2,
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.all(16),
+                                leading: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE8EAF6),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    _getTaskIcon(equipment),
+                                    color: AppColors.azulAustral,
+                                    size: 22,
+                                  ),
+                                ),
+                                title: Text(
+                                  equipment.title,
+                                  style: const TextStyle(
+                                    color: AppColors.azulAustral,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    equipment.description,
+                                    style: const TextStyle(
+                                      color: AppColors.darkGray,
                                     ),
                                   ),
-                                );
-                                return;
-                              }
-
-                              navigator.push(
-                                MaterialPageRoute(
-                                  builder: (_) => DetalleEquipoPage(
-                                    equipoDoc: doc,
-                                  ),
                                 ),
-                              );
-                            },
-                          ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _getPriorityIcon(equipment.priority),
+                                      color: AppColors.verdeAustral,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Icon(
+                                      Icons.arrow_forward_ios,
+                                      size: 16,
+                                      color: AppColors.verdeAustral,
+                                    ),
+                                  ],
+                                ),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => DetalleEquipoPage(
+                                        equipmentId: equipment.id,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            );
+                          },
                         );
                       },
-                    );
-                  },
-                ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

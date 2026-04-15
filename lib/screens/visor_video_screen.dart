@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:math' as math;
 
 import '../theme/app_theme.dart';
+import 'comentarios_section.dart';
 
 class VisorVideoScreen extends StatefulWidget {
   final String videoUrl;
   final String titulo;
+  final String equipmentId;
+  final String mediaDocId;
 
   const VisorVideoScreen({
     super.key,
     required this.videoUrl,
     required this.titulo,
+    this.equipmentId = '',
+    this.mediaDocId = '',
   });
 
   @override
@@ -66,37 +72,77 @@ class _VisorVideoScreenState extends State<VisorVideoScreen> {
                 return const Center(child: Text('Error al cargar el video'));
               }
 
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  AspectRatio(
-                    aspectRatio: _controller.value.aspectRatio,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: VideoPlayer(_controller),
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final aspectRatio = _controller.value.aspectRatio == 0
+                      ? 16 / 9
+                      : _controller.value.aspectRatio;
+
+                  final maxVideoWidth = math.min(
+                    constraints.maxWidth - 24,
+                    1280.0,
+                  );
+                  final maxVideoHeight = constraints.maxHeight * 0.76;
+
+                  var videoWidth = maxVideoWidth;
+                  var videoHeight = videoWidth / aspectRatio;
+                  if (videoHeight > maxVideoHeight) {
+                    videoHeight = maxVideoHeight;
+                    videoWidth = videoHeight * aspectRatio;
+                  }
+
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: Center(
+                      child: SizedBox(
+                        width: videoWidth,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: videoWidth,
+                              height: videoHeight,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: VideoPlayer(_controller),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                setState(() {
+                                  if (_controller.value.isPlaying) {
+                                    _controller.pause();
+                                  } else {
+                                    _controller.play();
+                                  }
+                                });
+                              },
+                              icon: Icon(
+                                _controller.value.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                              ),
+                              label: Text(
+                                _controller.value.isPlaying
+                                    ? 'Pausar'
+                                    : 'Reproducir',
+                              ),
+                            ),
+                            if (widget.equipmentId.isNotEmpty &&
+                                widget.mediaDocId.isNotEmpty) ...[  
+                              const SizedBox(height: 16),
+                              ComentariosSection(
+                                equipmentId: widget.equipmentId,
+                                mediaDocId: widget.mediaDocId,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        if (_controller.value.isPlaying) {
-                          _controller.pause();
-                        } else {
-                          _controller.play();
-                        }
-                      });
-                    },
-                    icon: Icon(
-                      _controller.value.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                    ),
-                    label: Text(
-                      _controller.value.isPlaying ? 'Pausar' : 'Reproducir',
-                    ),
-                  ),
-                ],
+                  );
+                },
               );
             },
           ),

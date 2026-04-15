@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'comentarios_section.dart';
 
 class VisorImagenScreen extends StatelessWidget {
   final String imageUrl;
   final String titulo;
+  final String equipmentId;
+  final String mediaDocId;
 
   const VisorImagenScreen({
     super.key,
     required this.imageUrl,
     required this.titulo,
+    this.equipmentId = '',
+    this.mediaDocId = '',
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasComments = equipmentId.isNotEmpty && mediaDocId.isNotEmpty;
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
@@ -31,20 +37,51 @@ class VisorImagenScreen extends StatelessWidget {
         height: double.infinity,
         decoration: const BoxDecoration(gradient: AppColors.australGradient),
         child: SafeArea(
-          child: Center(
-            child: InteractiveViewer(
-              child: Image.network(
-                imageUrl,
-                fit: BoxFit.contain,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const Center(child: CircularProgressIndicator());
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return const Center(child: Text('Error al cargar la imagen'));
-                },
+          child: Column(
+            children: [
+              // Imagen ocupa todo el espacio disponible
+              Expanded(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 5,
+                  boundaryMargin: const EdgeInsets.all(40),
+                  child: Center(
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) =>
+                          const Center(
+                        child: Text(
+                          'Error al cargar la imagen',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              // Panel de comentarios fijo en la parte inferior
+              if (hasComments)
+                SizedBox(
+                  height: 180,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: ComentariosSection(
+                      equipmentId: equipmentId,
+                      mediaDocId: mediaDocId,
+                      panelMode: true,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

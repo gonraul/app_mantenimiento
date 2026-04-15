@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'firebase_options.dart';
-import 'screens/tasks_page.dart';
+import 'screens/auth_page.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Mantenimiento Hospitalario',
       theme: AppTheme.light,
-      home: const TasksPage(),
+      home: const AuthPage(),
     );
   }
 }

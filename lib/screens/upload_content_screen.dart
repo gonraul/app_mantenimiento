@@ -1,15 +1,12 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
+import '../core/app_error_mapper.dart';
 import '../theme/app_theme.dart';
+import '../view_models/upload_content_view_model.dart';
 
 class UploadContentScreen extends StatefulWidget {
-  const UploadContentScreen({
-    super.key,
-    this.initialTopicId,
-  });
+  const UploadContentScreen({super.key, this.initialTopicId});
 
   final String? initialTopicId;
 
@@ -18,8 +15,7 @@ class UploadContentScreen extends StatefulWidget {
 }
 
 class _UploadContentScreenState extends State<UploadContentScreen> {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
+  final UploadContentViewModel _viewModel = UploadContentViewModel();
 
   static const String _newTopicOptionValue = '__create_new_topic__';
 
@@ -32,13 +28,13 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   final TextEditingController _tagsController = TextEditingController();
 
   PlatformFile? _selectedFile;
-  bool _isUploading = false;
   late String _selectedTopicId;
 
   bool get _topicLocked =>
       widget.initialTopicId != null && widget.initialTopicId!.trim().isNotEmpty;
 
-  bool get _isNewTopic => !_topicLocked && _selectedTopicId == _newTopicOptionValue;
+  bool get _isNewTopic =>
+      !_topicLocked && _selectedTopicId == _newTopicOptionValue;
 
   @override
   void initState() {
@@ -56,17 +52,8 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     _areaController.dispose();
     _areaTecnicaController.dispose();
     _tagsController.dispose();
+    _viewModel.dispose();
     super.dispose();
-  }
-
-  String _sanitizeFileName(String fileName) {
-    return fileName.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
-  }
-
-  String _detectType(String fileName) {
-    final extension = fileName.split('.').last.toLowerCase();
-    const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
-    return videoExtensions.contains(extension) ? 'video' : 'image';
   }
 
   InputDecoration _inputDecoration({required String label, String? hint}) {
@@ -90,16 +77,14 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     );
   }
 
-  String _selectedTopicLabel(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-  ) {
+  String _selectedTopicLabel(List<({String id, String title})> topics) {
     if (_selectedTopicId == _newTopicOptionValue) {
       return 'Nuevo tema';
     }
 
-    for (final doc in docs) {
-      if (doc.id == _selectedTopicId) {
-        return (doc.data()['title'] as String?) ?? '(sin titulo)';
+    for (final topic in topics) {
+      if (topic.id == _selectedTopicId) {
+        return topic.title;
       }
     }
 
@@ -133,7 +118,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   }
 
   Future<void> _upload() async {
-    if (_isUploading) return;
+    if (_viewModel.isUploading) return;
 
     final file = _selectedFile;
     if (file == null || file.bytes == null) {
@@ -150,66 +135,27 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       return;
     }
 
-    setState(() => _isUploading = true);
-
     try {
-      final docRef = _isNewTopic
-          ? _firestore.collection('pdfs').doc()
-          : _firestore.collection('pdfs').doc(_selectedTopicId);
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final safeName = _sanitizeFileName(file.name);
-      final storagePath = 'pdfs/${docRef.id}/${now}_$safeName';
-      final ref = _storage.ref(storagePath);
-
-      await ref.putData(file.bytes!);
-      final fileUrl = await ref.getDownloadURL();
-      final fileType = _detectType(file.name);
-
-      final fileEntry = {
-        'url': fileUrl,
-        'name': file.name,
-        'type': fileType,
-        'createdAt': Timestamp.now(),
-      };
-
-      if (_isNewTopic) {
-        final rawTags = _tagsController.text.trim();
-        final tags = rawTags.isEmpty
-            ? <String>[]
-            : rawTags
+      final rawTags = _tagsController.text.trim();
+      final tags = rawTags.isEmpty
+          ? <String>[]
+          : rawTags
                 .split(',')
                 .map((t) => t.trim().toLowerCase())
                 .where((t) => t.isNotEmpty)
                 .toList();
 
-        await docRef.set({
-          'title': _titleController.text.trim(),
-          'description': _descriptionController.text.trim(),
-          'piso': _pisoController.text.trim(),
-          'area': _areaController.text.trim(),
-          'areaTecnica': _areaTecnicaController.text.trim(),
-          'tags': tags,
-          'status': 'pendiente',
-          'priority': 'media',
-          'location': '',
-          'archivos': [fileUrl],
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        await docRef.update({
-          'archivos': FieldValue.arrayUnion([fileUrl]),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      await docRef.collection('media').add({
-        ...fileEntry,
-        'storagePath': storagePath,
-        'order': 0,
-        'timestamp': FieldValue.serverTimestamp(),
-        'created_at': FieldValue.serverTimestamp(),
-      });
+      await _viewModel.upload(
+        file: file,
+        isNewTopic: _isNewTopic,
+        selectedTopicId: _selectedTopicId,
+        title: _titleController.text.trim(),
+        description: _descriptionController.text.trim(),
+        piso: _pisoController.text.trim(),
+        area: _areaController.text.trim(),
+        areaTecnica: _areaTecnicaController.text.trim(),
+        tags: tags,
+      );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -218,11 +164,10 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
+      final message = AppErrorMapper.toUserMessage(e);
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Error al subir contenido: $e')));
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -249,8 +194,8 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
               colors: [AppColors.azulAustral, AppColors.verdeAustral],
             ),
           ),
-          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: _firestore.collection('pdfs').orderBy('title').snapshots(),
+          child: StreamBuilder<List<({String id, String title})>>(
+            stream: _viewModel.watchTopics(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(child: Text('Error: ${snapshot.error}'));
@@ -262,7 +207,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                 );
               }
 
-              final docs = snapshot.data?.docs ?? [];
+              final topics = snapshot.data ?? [];
 
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -281,7 +226,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: Text(
-                          'Equipo: ${_selectedTopicLabel(docs)}',
+                          'Equipo: ${_selectedTopicLabel(topics)}',
                           style: const TextStyle(
                             color: AppColors.azulAustral,
                             fontWeight: FontWeight.w600,
@@ -339,10 +284,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                         padding: EdgeInsets.symmetric(horizontal: 4),
                         child: Text(
                           'Separa las palabras con comas.',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                       ),
                     ],
@@ -368,27 +310,35 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                     ),
 
                     const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _isUploading ? null : _upload,
-                      icon: _isUploading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(
-                              Icons.cloud_upload_rounded,
-                              color: Colors.white,
+                    AnimatedBuilder(
+                      animation: _viewModel,
+                      builder: (context, _) {
+                        final isUploading = _viewModel.isUploading;
+                        return FilledButton.icon(
+                          onPressed: isUploading ? null : _upload,
+                          icon: isUploading
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.cloud_upload_rounded,
+                                  color: Colors.white,
+                                ),
+                          label: const Text('Subir contenido'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.azulAustral,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
                             ),
-                      label: const Text('Subir contenido'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.azulAustral,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
