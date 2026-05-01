@@ -50,3 +50,6 @@ app.*.map.json
 /ios/Runner/GoogleService-Info.plist
 /macos/Runner/GoogleService-Info.plist
 /firebase.json
+
+# Local VS Code machine-specific settings
+/.vscode/settings.json

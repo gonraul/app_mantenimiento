@@ -1,0 +1,43 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.13/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.13",
+  "version": "1.0.1",
+  "id": "b9e39c53-4a5f-4cb6-9f73-9829dbf16521",
+  "packageName": "com.austral.mantenimientobot",
+  "developer": {
+    "name": "Hospital Austral",
+    "websiteUrl": "https://www.hospitalaustral.edu.ar",
+    "privacyUrl": "https://www.hospitalaustral.edu.ar",
+    "termsOfUseUrl": "https://www.hospitalaustral.edu.ar"
+  },
+  "name": {
+    "short": "MantenimientoBot",
+    "full": "MantenimientoBot"
+  },
+  "description": {
+    "short": "Bot de mantenimiento hospitalario",
+    "full": "Bot de mantenimiento hospitalario para registrar reportes tecnicos y consultar antecedentes de equipos en Microsoft Teams"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#2E6F40",
+  "bots": [
+    {
+      "botId": "59c897eb-2b85-4182-acf0-55a81cc220e9",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}

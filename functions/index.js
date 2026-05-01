@@ -1,9 +1,9 @@
 const { onRequest } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
-const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
+const { BotFrameworkAdapter } = require("botbuilder");
 const path = require("path");
 const { randomUUID } = require("crypto");
 
@@ -14,8 +14,6 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 const WHATSAPP_VERIFY_TOKEN = "HUA_SECRET_2026";
-const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
-const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
 const GEMINI_MODEL = "gemini-2.5-flash";
 const MAX_GEMINI_RETRIES = 2;
 const BASE_RETRY_DELAY_MS = 1200;
@@ -988,7 +986,7 @@ function buildListadoResponse({ textoTecnico, historial, dateRange, isComplete =
 }
 
 async function runGeminiConsultation({ textoTecnico, historial }) {
-	const apiKey = GEMINI_API_KEY.value();
+	const apiKey = process.env.GEMINI_API_KEY;
 	if (!apiKey) {
 		const missingSecretError = new Error("Falta secreto GEMINI_API_KEY");
 		missingSecretError.status = 500;
@@ -1170,7 +1168,7 @@ async function runGeminiAnalysis(textoTecnico) {
 }
 
 async function runGeminiAnalysisWithSessionContext({ textoTecnico, sessionContext = null }) {
-	const apiKey = GEMINI_API_KEY.value();
+	const apiKey = process.env.GEMINI_API_KEY;
 	if (!apiKey) {
 		const missingSecretError = new Error("Falta secreto GEMINI_API_KEY");
 		missingSecretError.status = 500;
@@ -1367,7 +1365,228 @@ async function resolveIntentWithConversationContext({ textoTecnico, telefono }) 
 	return baseIntent;
 }
 
-exports.whatsappWebhook = onRequest({ secrets: [GEMINI_API_KEY, TWILIO_AUTH_TOKEN] }, async (request, response) => {
+function buildTeamsTechnicianRef(activity = {}) {
+	const from = activity?.from || {};
+	const conversation = activity?.conversation || {};
+	const channelData = activity?.channelData || {};
+
+	return {
+		id: from.id || null,
+		name: from.name || null,
+		aadObjectId: from.aadObjectId || channelData?.tenant?.id || null,
+		conversationId: conversation.id || null,
+		serviceUrl: activity?.serviceUrl || null,
+		channelId: activity?.channelId || "msteams",
+	};
+}
+
+async function fetchTeamsHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
+	if (!tecnicoId) {
+		return [];
+	}
+
+	const snapshot = await db
+		.collection("mensajes_teams")
+		.where("tecnico.id", "==", tecnicoId)
+		.limit(120)
+		.get();
+
+	const ordered = [...snapshot.docs].sort((a, b) => {
+		const ta = a.data()?.timestamp?.toMillis?.() || 0;
+		const tb = b.data()?.timestamp?.toMillis?.() || 0;
+		return tb - ta;
+	});
+
+	const normalizedEquipo = normalizeText(equipoName || "");
+	const filtered = ordered.filter((doc) => {
+		const data = doc.data() || {};
+		if (data.modo !== "reporte") {
+			return false;
+		}
+
+		if (!normalizedEquipo) {
+			return true;
+		}
+
+		const msg = normalizeText(data.mensaje_original || "");
+		const equipo = normalizeText(data.equipo_nombre_consulta || data?.respuesta_ia_json?.equipo || "");
+		return (equipo && (equipo.includes(normalizedEquipo) || normalizedEquipo.includes(equipo))) || msg.includes(normalizedEquipo);
+	});
+
+	return filtered.slice(0, limit).map((doc) => {
+		const d = doc.data() || {};
+		return {
+			fecha: d.timestamp?.toDate?.()?.toISOString?.() || null,
+			mensaje: d.mensaje_original || "",
+			respuesta: d.respuesta_ia_tecnica || d.respuesta_ia || "",
+		};
+	});
+}
+
+async function runTeamsGeminiConsultation({ textoTecnico, historial }) {
+	const apiKey = process.env.GEMINI_API_KEY;
+	if (!apiKey) {
+		throw new Error("Falta secreto GEMINI_API_KEY");
+	}
+
+	const genAI = new GoogleGenerativeAI(apiKey);
+	const model = genAI.getGenerativeModel({
+		model: GEMINI_MODEL,
+		systemInstruction: fieldChiefSystemInstruction,
+	});
+
+	const historialPrompt = historial.length
+		? historial
+			.map((h, idx) => `#${idx + 1} | fecha=${h.fecha || "sin_fecha"} | tecnico=${h.mensaje} | analisis=${h.respuesta || "sin_analisis"}`)
+			.join("\n")
+		: "Sin historial previo para este tecnico.";
+
+	const userPrompt = [
+		"Contexto: mantenimiento hospitalario en Microsoft Teams.",
+		"Responde en espanol rioplatense, concreto y tecnico.",
+		"Si no hay datos suficientes, pedi 1 dato faltante puntual.",
+		"[Historial Firestore del tecnico]",
+		historialPrompt,
+		"[Consulta actual]",
+		textoTecnico,
+	].join("\n");
+
+	const result = await model.generateContent({
+		contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+	});
+
+	const text = result.response.text()?.trim();
+	return ensureTechnicalResponseFormat(text, textoTecnico);
+}
+
+exports.teamsWebhook = onRequest({}, async (request, response) => {
+	if (request.method !== "POST") {
+		return response.status(405).send("Metodo no permitido");
+	}
+
+	const adapter = new BotFrameworkAdapter({
+		appId: process.env.MICROSOFT_APP_ID || "59c897eb-2b85-4182-acf0-55a81cc220e9",
+		appPassword: process.env.MICROSOFT_APP_PASSWORD || "",
+	});
+
+	adapter.onTurnError = async (turnContext, error) => {
+		logger.error("Error en Teams bot turn", {
+			error: error?.message,
+			stack: error?.stack,
+		});
+		await turnContext.sendActivity("Hubo un error procesando tu mensaje. Intenta nuevamente.");
+	};
+
+	try {
+		await adapter.processActivity(request, response, async (turnContext) => {
+			if (turnContext.activity.type !== "message") {
+				return;
+			}
+
+			const textoTecnico = String(turnContext.activity.text || "").trim();
+			if (!textoTecnico) {
+				await turnContext.sendActivity("No recibi texto en el mensaje.");
+				return;
+			}
+
+			const tecnico = buildTeamsTechnicianRef(turnContext.activity);
+			const intentMode = detectIntentMode(textoTecnico);
+			const equipoName = extractEquipoNameFromConsulta(textoTecnico);
+
+			if (intentMode === "reporte") {
+				await db.collection("mensajes_teams").add({
+					modo: "reporte",
+					canal: "msteams",
+					mensaje_original: textoTecnico,
+					equipo_nombre_consulta: equipoName || null,
+					tecnico,
+					timestamp: admin.firestore.FieldValue.serverTimestamp(),
+				});
+
+				await turnContext.sendActivity("ok. registrado");
+				return;
+			}
+
+			let respuestaConsulta = "No pude resolver tu consulta en este momento.";
+			let iaStatus = "error";
+			let iaErrorCode = "UNKNOWN";
+
+			try {
+				const historial = await fetchTeamsHistoryContext({
+					tecnicoId: tecnico.id,
+					equipoName,
+					limit: 8,
+				});
+
+				respuestaConsulta = await runTeamsGeminiConsultation({
+					textoTecnico,
+					historial,
+				});
+				iaStatus = "ok";
+				iaErrorCode = null;
+
+				await db.collection("mensajes_teams").add({
+					modo: "consulta",
+					canal: "msteams",
+					mensaje_original: textoTecnico,
+					respuesta_ia: respuestaConsulta,
+					tecnico,
+					equipo_nombre_consulta: equipoName || null,
+					contexto_reportes_usados: historial.length,
+					ia_status: iaStatus,
+					ia_error_code: iaErrorCode,
+					ia_model: GEMINI_MODEL,
+					timestamp: admin.firestore.FieldValue.serverTimestamp(),
+				});
+			} catch (consultaError) {
+				if (consultaError?.status === 429) {
+					respuestaConsulta = "Servicio de IA no disponible por cuota agotada. Reintentar mas tarde.";
+					iaErrorCode = "QUOTA_EXCEEDED";
+				} else if (consultaError?.status === 404) {
+					respuestaConsulta = "Modelo de IA no disponible actualmente. Se requiere actualizar configuracion del modelo.";
+					iaErrorCode = "MODEL_NOT_FOUND";
+				} else if (consultaError?.message === "Falta secreto GEMINI_API_KEY") {
+					respuestaConsulta = "Configuracion de IA incompleta. Falta GEMINI_API_KEY.";
+					iaErrorCode = "MISSING_API_KEY_SECRET";
+				}
+
+				logger.error("Error en consulta Teams", {
+					error: consultaError?.message,
+					stack: consultaError?.stack,
+					tecnicoId: tecnico.id,
+				});
+
+				await db.collection("mensajes_teams").add({
+					modo: "consulta",
+					canal: "msteams",
+					mensaje_original: textoTecnico,
+					respuesta_ia: respuestaConsulta,
+					tecnico,
+					equipo_nombre_consulta: equipoName || null,
+					ia_status: iaStatus,
+					ia_error_code: iaErrorCode,
+					ia_model: GEMINI_MODEL,
+					timestamp: admin.firestore.FieldValue.serverTimestamp(),
+				});
+			}
+
+			await turnContext.sendActivity(respuestaConsulta);
+		});
+
+		return;
+	} catch (error) {
+		logger.error("Error en teamsWebhook", {
+			error: error?.message,
+			stack: error?.stack,
+		});
+		return response.status(500).json({
+			error: "Error interno al procesar Teams webhook",
+			detalle: error?.message,
+		});
+	}
+});
+
+exports.whatsappWebhook = onRequest({}, async (request, response) => {
 	try {
 		if (request.method === "GET") {
 			const mode = request.query["hub.mode"];
@@ -1395,7 +1614,7 @@ exports.whatsappWebhook = onRequest({ secrets: [GEMINI_API_KEY, TWILIO_AUTH_TOKE
 		const twilioNumber = request.body?.To || "";
 		const numMedia = Number.parseInt(request.body?.NumMedia || "0", 10) || 0;
 		const accountSid = String(request.body?.AccountSid || "").trim();
-		const twilioAuthToken = String(TWILIO_AUTH_TOKEN.value() || "").trim();
+		const twilioAuthToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
 		const intentMode = await resolveIntentWithConversationContext({
 			textoTecnico,
 			telefono,

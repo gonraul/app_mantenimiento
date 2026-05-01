@@ -35,3 +35,36 @@ flutter doctor
 flutter pub get
 flutter run
 ```
+
+## Trabajo en 3 entornos (corporativo + no corporativos)
+
+Para evitar diferencias entre PCs, usamos una unica guia operativa:
+
+- docs/entornos_colaboracion.md
+
+Ese documento define:
+
+- bootstrap por tipo de maquina
+- comandos estandar para desarrollar y validar
+- reglas para archivos locales (Firebase) que no se versionan
+- checks minimos antes de push
+
+Comando sugerido de validacion local:
+
+```powershell
+.\scripts\check_all.ps1
+```
+
+Si PowerShell bloquea scripts por politicas corporativas:
+
+```cmd
+.\scripts\check_all.cmd
+```
+
+## Copilot Pro en otras PCs
+
+Copilot toma reglas del repositorio desde:
+
+- .github/copilot-instructions.md
+
+Solo necesitan hacer `git pull` para recibir la configuracion compartida.
