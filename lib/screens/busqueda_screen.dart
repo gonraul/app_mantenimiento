@@ -45,14 +45,14 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Búsqueda de Documentos')),
+      appBar: AppBar(title: const Text('Búsqueda de Equipos')),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
               decoration: InputDecoration(
-                hintText: 'Buscar por palabra clave...',
+                hintText: 'Buscar tarjeta por equipo, descripción o etiqueta...',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -80,7 +80,7 @@ class _BusquedaScreenState extends State<BusquedaScreen> {
                 final equipments = _viewModel.equipments;
                 if (equipments.isEmpty) {
                   return const Center(
-                    child: Text('No se encontraron documentos'),
+                    child: Text('No se encontraron tarjetas de equipos'),
                   );
                 }
 

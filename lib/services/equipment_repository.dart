@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -14,6 +16,8 @@ class EquipmentRepository {
 
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
+  static const String _topicsCollection = 'equipos';
+  static const String _legacyTopicsCollection = 'pdfs';
 
   static const List<String> _videoExtensions = <String>[
     'mp4',
@@ -23,15 +27,26 @@ class EquipmentRepository {
     'webm',
   ];
 
-  Stream<List<Equipment>> getEquipments() async* {
-    await for (final snapshot in _firestore.collection('pdfs').snapshots()) {
-      final equipments = await Future.wait(
-        snapshot.docs.map((doc) async {
-          final mediaSnapshot = await doc.reference.collection('media').get();
+  Stream<List<Equipment>> getEquipments() {
+    final controller = StreamController<List<Equipment>>();
 
-          final mediaDocs = mediaSnapshot.docs
-              .map((d) => <String, dynamic>{'id': d.id, ...d.data()})
-              .toList();
+    QuerySnapshot<Map<String, dynamic>>? primarySnapshot;
+    QuerySnapshot<Map<String, dynamic>>? legacySnapshot;
+
+    Future<List<Equipment>> mapSnapshot(
+      QuerySnapshot<Map<String, dynamic>> snapshot,
+    ) async {
+      return Future.wait(
+        snapshot.docs.map((doc) async {
+          List<Map<String, dynamic>> mediaDocs = const <Map<String, dynamic>>[];
+          try {
+            final mediaSnapshot = await doc.reference.collection('media').get();
+            mediaDocs = mediaSnapshot.docs
+                .map((d) => <String, dynamic>{'id': d.id, ...d.data()})
+                .toList();
+          } catch (e) {
+            debugPrint('No se pudo cargar media para ${doc.id}: $e');
+          }
 
           return Equipment.fromFirestore(
             id: doc.id,
@@ -40,9 +55,59 @@ class EquipmentRepository {
           );
         }),
       );
-
-      yield equipments;
     }
+
+    Future<void> emitMerged() async {
+      try {
+        final primary = primarySnapshot == null
+            ? const <Equipment>[]
+            : await mapSnapshot(primarySnapshot!);
+        final legacy = legacySnapshot == null
+            ? const <Equipment>[]
+            : await mapSnapshot(legacySnapshot!);
+
+        final merged = <String, Equipment>{};
+        for (final equipment in primary) {
+          merged[equipment.id] = equipment;
+        }
+        for (final equipment in legacy) {
+          merged.putIfAbsent(equipment.id, () => equipment);
+        }
+
+        controller.add(merged.values.toList());
+      } catch (e, st) {
+        controller.addError(e, st);
+      }
+    }
+
+    final primarySub = _firestore
+        .collection(_topicsCollection)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            primarySnapshot = snapshot;
+            unawaited(emitMerged());
+          },
+          onError: controller.addError,
+        );
+
+    final legacySub = _firestore
+        .collection(_legacyTopicsCollection)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            legacySnapshot = snapshot;
+            unawaited(emitMerged());
+          },
+          onError: controller.addError,
+        );
+
+    controller.onCancel = () async {
+      await primarySub.cancel();
+      await legacySub.cancel();
+    };
+
+    return controller.stream;
   }
 
   Stream<List<TaskModel>> getTasks() async* {
@@ -75,29 +140,80 @@ class EquipmentRepository {
     }
   }
 
-  Stream<Equipment?> watchEquipmentById(String id) async* {
-    final docRef = _firestore.collection('pdfs').doc(id);
-    await for (final doc in docRef.snapshots()) {
-      if (!doc.exists || doc.data() == null) {
-        yield null;
-        continue;
+  Stream<Equipment?> watchEquipmentById(String id) {
+    final controller = StreamController<Equipment?>();
+    final primaryRef = _firestore.collection(_topicsCollection).doc(id);
+    final legacyRef = _firestore.collection(_legacyTopicsCollection).doc(id);
+
+    DocumentSnapshot<Map<String, dynamic>>? primaryDoc;
+    DocumentSnapshot<Map<String, dynamic>>? legacyDoc;
+
+    Future<void> emitResolved() async {
+      try {
+        final hasPrimary =
+            primaryDoc?.exists == true && primaryDoc?.data() != null;
+        final hasLegacy = legacyDoc?.exists == true && legacyDoc?.data() != null;
+
+        if (!hasPrimary && !hasLegacy) {
+          controller.add(null);
+          return;
+        }
+
+        final activeRef = hasPrimary ? primaryRef : legacyRef;
+        final activeDoc = hasPrimary ? primaryDoc! : legacyDoc!;
+
+        List<Map<String, dynamic>> mediaDocs = const <Map<String, dynamic>>[];
+        try {
+          final mediaSnapshot = await activeRef.collection('media').get();
+          mediaDocs = mediaSnapshot.docs
+              .map((d) => <String, dynamic>{'id': d.id, ...d.data()})
+              .toList();
+        } catch (e) {
+          debugPrint('No se pudo cargar media para ${activeDoc.id}: $e');
+        }
+
+        controller.add(
+          Equipment.fromFirestore(
+            id: activeDoc.id,
+            docData: activeDoc.data()!,
+            mediaDocs: mediaDocs,
+          ),
+        );
+      } catch (e, st) {
+        controller.addError(e, st);
       }
-
-      final mediaSnapshot = await docRef.collection('media').get();
-      final mediaDocs = mediaSnapshot.docs
-          .map((d) => <String, dynamic>{'id': d.id, ...d.data()})
-          .toList();
-
-      yield Equipment.fromFirestore(
-        id: doc.id,
-        docData: doc.data()!,
-        mediaDocs: mediaDocs,
-      );
     }
+
+    final primarySub = primaryRef.snapshots().listen(
+      (snapshot) {
+        primaryDoc = snapshot;
+        unawaited(emitResolved());
+      },
+      onError: controller.addError,
+    );
+
+    final legacySub = legacyRef.snapshots().listen(
+      (snapshot) {
+        legacyDoc = snapshot;
+        unawaited(emitResolved());
+      },
+      onError: controller.addError,
+    );
+
+    controller.onCancel = () async {
+      await primarySub.cancel();
+      await legacySub.cancel();
+    };
+
+    return controller.stream;
   }
 
   Stream<List<({String id, String title})>> watchTopicsList() {
-    return _firestore.collection('pdfs').orderBy('title').snapshots().map((s) {
+    return _firestore
+        .collection(_topicsCollection)
+        .orderBy('title')
+        .snapshots()
+        .map((s) {
       return s.docs
           .map(
             (doc) => (
@@ -110,7 +226,10 @@ class EquipmentRepository {
   }
 
   Future<List<({String id, String title})>> getTopicsList() async {
-    final snapshot = await _firestore.collection('pdfs').orderBy('title').get();
+    final snapshot = await _firestore
+        .collection(_topicsCollection)
+        .orderBy('title')
+        .get();
     return snapshot.docs
         .map(
           (doc) => (
@@ -157,7 +276,7 @@ class EquipmentRepository {
 
   String _buildStoragePath(String pdfId, String safeFileName) {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    return 'pdfs/$pdfId/${timestamp}_$safeFileName';
+    return 'equipos/$pdfId/${timestamp}_$safeFileName';
   }
 
   String _sanitizeFileName(String fileName) {
@@ -180,7 +299,7 @@ class EquipmentRepository {
     final safeFileName = _sanitizeFileName(originalFileName);
     final mediaType = _detectMediaType(originalFileName);
 
-    final docRef = _firestore.collection('pdfs').doc();
+    final docRef = _firestore.collection(_topicsCollection).doc();
 
     await docRef.set({
       'title': title,
@@ -220,7 +339,7 @@ class EquipmentRepository {
   }) async {
     final safeFileName = _sanitizeFileName(originalFileName);
     final mediaType = _detectMediaType(originalFileName);
-    final docRef = _firestore.collection('pdfs').doc(pdfId);
+    final docRef = _firestore.collection(_topicsCollection).doc(pdfId);
 
     final downloadUrl = await _uploadMediaToTopic(
       docRef: docRef,
@@ -242,7 +361,7 @@ class EquipmentRepository {
     required String equipmentId,
     required String mediaSource,
   }) async {
-    final docRef = _firestore.collection('pdfs').doc(equipmentId);
+    final docRef = _firestore.collection(_topicsCollection).doc(equipmentId);
 
     // Borrado en Storage con tolerancia a rutas legacy/url.
     try {
@@ -372,7 +491,7 @@ class EquipmentRepository {
     required String mediaDocId,
   }) {
     return _firestore
-        .collection('pdfs')
+      .collection(_topicsCollection)
         .doc(equipmentId)
         .collection('media')
         .doc(mediaDocId)
@@ -392,7 +511,7 @@ class EquipmentRepository {
     required String text,
   }) {
     return _firestore
-        .collection('pdfs')
+      .collection(_topicsCollection)
         .doc(equipmentId)
         .collection('media')
         .doc(mediaDocId)
@@ -409,7 +528,7 @@ class EquipmentRepository {
     required String commentId,
   }) {
     return _firestore
-        .collection('pdfs')
+      .collection(_topicsCollection)
         .doc(equipmentId)
         .collection('media')
         .doc(mediaDocId)
