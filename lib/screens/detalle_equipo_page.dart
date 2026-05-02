@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -70,6 +71,8 @@ class DetalleEquipoPage extends StatelessWidget {
             ? 'Detalle de equipo'
             : equipment.title.trim();
         final description = equipment.description.trim();
+        final useDesktopLayout =
+          MediaQuery.of(context).size.width > _desktopLayoutBreakpoint;
 
         final historial = equipment.media
             .where((media) => media.source.isNotEmpty)
@@ -79,21 +82,64 @@ class DetalleEquipoPage extends StatelessWidget {
                 kind: _kindFromMediaType(media.type),
                 uploadedAt: media.createdAt,
                 mediaDocId: media.id,
+                name: media.name,
+                caption: media.caption,
               ),
             )
             .toList();
 
+        final user = FirebaseAuth.instance.currentUser;
+        final initials = _userInitials(user);
+
         return Scaffold(
           extendBodyBehindAppBar: false,
-          backgroundColor: Colors.transparent,
+          backgroundColor: const Color(0xFFF0F2F5),
           appBar: AppBar(
-            title: Text(
-              equipoNombre,
-              style: const TextStyle(color: Colors.white),
+            flexibleSpace: Container(
+              decoration: const BoxDecoration(gradient: AppColors.australGradient),
             ),
-            backgroundColor: Colors.transparent,
+            backgroundColor: AppColors.azulAustral,
             elevation: 0,
             foregroundColor: Colors.white,
+            centerTitle: true,
+            title: Image.asset(
+              'assets/images/logo_white-removebg-preview.png',
+              height: 28,
+            ),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: Colors.white24,
+                  child: Text(
+                    initials,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            bottom: const PreferredSize(
+              preferredSize: Size.fromHeight(34),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Text(
+                    'Mantenimiento Hospital Austral',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
           floatingActionButton: FloatingActionButton(
             backgroundColor: AppColors.verdeAustral,
@@ -109,17 +155,13 @@ class DetalleEquipoPage extends StatelessWidget {
             },
             child: const Icon(Icons.add_a_photo),
           ),
-          body: Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: AppColors.australGradient,
-            ),
-            child: Center(
-              child: ConstrainedBox(
+          body: Center(
+            child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: _maxDesktopWidth),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                  padding: useDesktopLayout
+                      ? const EdgeInsets.fromLTRB(16, 16, 16, 12)
+                      : const EdgeInsets.only(bottom: 12),
                   child: _DetailContent(
                     description: description,
                     historial: historial,
@@ -138,14 +180,11 @@ class DetalleEquipoPage extends StatelessWidget {
                       );
                     },
                     equipmentId: equipment.id,
-                    useDesktopLayout:
-                        MediaQuery.of(context).size.width >
-                        _desktopLayoutBreakpoint,
+                    useDesktopLayout: useDesktopLayout,
                   ),
                 ),
               ),
             ),
-          ),
         );
       },
     );
@@ -160,6 +199,18 @@ class DetalleEquipoPage extends StatelessWidget {
       case MediaType.file:
         return _ArchivoKind.file;
     }
+  }
+
+  static String _userInitials(User? user) {
+    if (user == null) return '?';
+    final name = user.displayName;
+    if (name != null && name.trim().isNotEmpty) {
+      final parts = name.trim().split(RegExp(r'\s+'));
+      return parts.map((p) => p[0]).take(2).join().toUpperCase();
+    }
+    final email = user.email;
+    if (email != null && email.isNotEmpty) return email[0].toUpperCase();
+    return '?';
   }
 
   String _formatDate(DateTime date) {
@@ -264,21 +315,70 @@ class _DetailContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final summaryCard = Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Text(
-        description.isNotEmpty ? description : 'Sin descripcion cargada.',
-        style: const TextStyle(
-          color: AppColors.darkGray,
-          fontSize: 14,
-        ),
-      ),
-    );
+    // ── Franja blanca (móvil) o tarjeta (desktop) ────────────────────────
+    final summaryCard = useDesktopLayout
+        ? Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  equipoNombre,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.azulAustral,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  description.isNotEmpty
+                      ? description
+                      : 'Sin descripcion cargada.',
+                  style: const TextStyle(
+                    color: AppColors.darkGray,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          )
+        // Móvil: franja plana borde a borde (sin padding del padre)
+        : Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+            color: Colors.white,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  equipoNombre,
+                  style: const TextStyle(
+                    color: AppColors.azulAustral,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
 
     final gallerySection = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,7 +386,7 @@ class _DetailContent extends StatelessWidget {
         const Text(
           'Historial de Mantenimiento',
           style: TextStyle(
-            color: Colors.white,
+            color: AppColors.azulAustral,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
@@ -297,7 +397,7 @@ class _DetailContent extends StatelessWidget {
               ? const Center(
                   child: Text(
                     'No hay archivos cargados aun.',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: AppColors.darkGray),
                   ),
                 )
               : LayoutBuilder(
@@ -312,6 +412,8 @@ class _DetailContent extends StatelessWidget {
                             : formatDate(item.uploadedAt!),
                         equipmentId: equipmentId,
                         mediaDocId: item.mediaDocId,
+                        name: item.name,
+                        caption: item.caption,
                         onTap: () async {
                           final openUrl = await resolveMediaUrlForOpen(
                             item.source,
@@ -393,8 +495,13 @@ class _DetailContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         summaryCard,
-        const SizedBox(height: 30),
-        Expanded(child: gallerySection),
+        const SizedBox(height: 20),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: gallerySection,
+          ),
+        ),
       ],
     );
   }
@@ -409,6 +516,8 @@ class _HistorialCard extends StatefulWidget {
     required this.onDelete,
     required this.equipmentId,
     required this.mediaDocId,
+    required this.name,
+    required this.caption,
   });
 
   final String mediaSource;
@@ -418,6 +527,8 @@ class _HistorialCard extends StatefulWidget {
   final Future<void> Function() onDelete;
   final String equipmentId;
   final String mediaDocId;
+  final String name;
+  final String caption;
 
   @override
   State<_HistorialCard> createState() => _HistorialCardState();
@@ -451,6 +562,66 @@ class _HistorialCardState extends State<_HistorialCard> {
     final hoverElevation = isDesktop ? 7.0 : baseElevation;
     final targetElevation = _isHovered ? hoverElevation : baseElevation;
 
+    Widget buildThumbnail() {
+      if (widget.kind == _ArchivoKind.image) {
+        return FutureBuilder<String>(
+          future: _resolveMediaUrl(widget.mediaSource),
+          builder: (context, snapshot) {
+            final resolved = snapshot.data;
+            if (resolved != null && _isRemoteUrl(resolved)) {
+              return CachedNetworkImage(
+                imageUrl: resolved,
+                fit: BoxFit.cover,
+                placeholder: (context, imageUrl) => Container(
+                  color: const Color(0xFFF0F3F8),
+                  child: const Icon(
+                    Icons.image_outlined,
+                    color: AppColors.azulAustral,
+                    size: 28,
+                  ),
+                ),
+                errorWidget: (context, imageUrl, error) => Container(
+                  color: const Color(0xFFF0F3F8),
+                  child: const Icon(
+                    Icons.broken_image_outlined,
+                    color: AppColors.azulAustral,
+                    size: 28,
+                  ),
+                ),
+              );
+            }
+            return Container(
+              color: const Color(0xFFF0F3F8),
+              child: const Icon(
+                Icons.image_outlined,
+                color: AppColors.azulAustral,
+                size: 28,
+              ),
+            );
+          },
+        );
+      }
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            color: const Color(0xFFF0F3F8),
+            child: Icon(
+              widget.kind == _ArchivoKind.video
+                  ? Icons.videocam_rounded
+                  : Icons.insert_drive_file_rounded,
+              color: AppColors.azulAustral,
+              size: 32,
+            ),
+          ),
+          if (widget.kind == _ArchivoKind.video)
+            const Center(
+              child: Icon(Icons.play_circle_outline, color: Colors.white70, size: 32),
+            ),
+        ],
+      );
+    }
+
     return MouseRegion(
       onEnter: (_) {
         if (!isDesktop) return;
@@ -473,14 +644,13 @@ class _HistorialCardState extends State<_HistorialCard> {
                 isDesktop && _isHovered
                 ? AppColors.azulAustral.withValues(alpha: 0.24)
                 : Colors.transparent;
-
             return Card(
               color: Colors.white,
               elevation: elevation,
               shadowColor: Colors.black26,
               margin: EdgeInsets.zero,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(16),
                 side: BorderSide(color: hoverBorderColor, width: 0.9),
               ),
               clipBehavior: Clip.antiAlias,
@@ -488,116 +658,75 @@ class _HistorialCardState extends State<_HistorialCard> {
             );
           },
           child: InkWell(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(16),
             onTap: widget.onTap,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: widget.kind == _ArchivoKind.image
-                        ? FutureBuilder<String>(
-                            future: _resolveMediaUrl(widget.mediaSource),
-                            builder: (context, snapshot) {
-                              final resolved = snapshot.data;
-                              if (resolved != null && _isRemoteUrl(resolved)) {
-                                return CachedNetworkImage(
-                                  imageUrl: resolved,
-                                  fit: BoxFit.contain,
-                                  placeholder: (context, imageUrl) => Container(
-                                    color: const Color(0xFFF0F3F8),
-                                    child: const Icon(
-                                      Icons.image_outlined,
-                                      color: AppColors.azulAustral,
-                                      size: 32,
-                                    ),
-                                  ),
-                                  errorWidget: (context, imageUrl, error) =>
-                                      Container(
-                                        color: const Color(0xFFF0F3F8),
-                                        child: const Icon(
-                                          Icons.broken_image_outlined,
-                                          color: AppColors.azulAustral,
-                                          size: 32,
-                                        ),
-                                      ),
-                                );
-                              }
-
-                              return Container(
-                                color: const Color(0xFFF0F3F8),
-                                child: const Icon(
-                                  Icons.image_outlined,
-                                  color: AppColors.azulAustral,
-                                  size: 32,
-                                ),
-                              );
-                            },
-                          )
-                        : Container(
-                            color: const Color(0xFFF0F3F8),
-                            child: Icon(
-                              widget.kind == _ArchivoKind.video
-                                  ? Icons.videocam_rounded
-                                  : Icons.insert_drive_file_rounded,
-                              color: AppColors.azulAustral,
-                              size: 42,
-                            ),
-                          ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF1F1F1),
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(20),
-                      bottomRight: Radius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 80,
+                      height: 80,
+                      child: buildThumbnail(),
                     ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              widget.dateText,
-                              textAlign: TextAlign.left,
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.darkGray,
-                              ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.caption.isNotEmpty)
+                          Text(
+                            widget.caption,
+                            style: const TextStyle(
+                              color: AppColors.azulAustral,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
                             ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          IconButton(
-                            onPressed: widget.onDelete,
-                            icon: Icon(
-                              Icons.delete_outline,
-                              color: Colors.red[400],
+                        if (false) ...[ // caption ya es el título, bloque caption secundario deshabilitado
+                          const SizedBox(height: 3),
+                          Text(
+                            widget.caption,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 13,
                             ),
-                            splashRadius: 16,
-                            visualDensity: VisualDensity.compact,
-                            tooltip: 'Eliminar archivo',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
-                      ),
-                      if (widget.mediaDocId.isNotEmpty)
-                        _CardCommentPreview(
-                          equipmentId: widget.equipmentId,
-                          mediaDocId: widget.mediaDocId,
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.dateText,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.darkGray,
+                          ),
                         ),
-                    ],
+                        if (widget.mediaDocId.isNotEmpty)
+                          _CardCommentPreview(
+                            equipmentId: widget.equipmentId,
+                            mediaDocId: widget.mediaDocId,
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                  IconButton(
+                    onPressed: widget.onDelete,
+                    icon: Icon(Icons.delete_outline, color: Colors.red[400]),
+                    splashRadius: 16,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Eliminar archivo',
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -612,12 +741,16 @@ class _HistorialItem {
     required this.kind,
     required this.uploadedAt,
     required this.mediaDocId,
+    required this.name,
+    required this.caption,
   });
 
   final String source;
   final _ArchivoKind kind;
   final DateTime? uploadedAt;
   final String mediaDocId;
+  final String name;
+  final String caption;
 }
 
 enum _ArchivoKind { image, video, file }
