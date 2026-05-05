@@ -18,7 +18,7 @@ try {
         Write-Output '==> git pull --rebase origin main'
         git pull --rebase origin main
         if ($LASTEXITCODE -ne 0) {
-            Write-Error 'El rebase fallo. Resolvé los conflictos con git status y luego git rebase --continue'
+            Write-Error 'El rebase fallo. Resolve los conflictos con git status y luego git rebase --continue'
         }
 
         Write-Output '==> Preparando entorno (dev_env.ps1)'
@@ -46,13 +46,13 @@ try {
             flutter test
         }
         else {
-            Write-Output '==> flutter test: omitido por -SkipTests'
+            Write-Output '==> flutter test: omitido (-SkipTests)'
         }
 
         Write-Output '==> git status'
         git status --short --branch
 
-        $msg = Read-Host 'Mensaje de commit (deja vacio para no commitear)'
+        $msg = Read-Host 'Mensaje de commit (dejar vacio para no commitear)'
         if ($msg -ne '') {
             git add -A
             git commit -m $msg
@@ -60,7 +60,7 @@ try {
             Write-Output '==> git pull --rebase origin main (antes del push)'
             git pull --rebase origin main
             if ($LASTEXITCODE -ne 0) {
-                Write-Error 'El rebase fallo. Resolvé los conflictos con git status y luego git rebase --continue'
+                Write-Error 'El rebase fallo. Resolve los conflictos con git status y luego git rebase --continue'
             }
 
             Write-Output '==> git push origin main'
