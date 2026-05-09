@@ -49,6 +49,44 @@ Asi, todos corren con versiones equivalentes y mismos comandos.
 
 ## 3) Flujo diario recomendado
 
+### Flujo sincronizado entre PCs (recomendado)
+
+Mismo comando en cualquier PC para sincronizar y validar:
+
+**Inicio de jornada:**
+
+```powershell
+.\scripts\sync_and_check.ps1 -Modo inicio
+```
+
+Esto:
+- Descarga cambios con `git pull --rebase --autostash origin main`
+- Prepara entorno (dev_env.ps1)
+- Muestra estado del repo
+
+**Cierre de jornada:**
+
+```powershell
+.\scripts\sync_and_check.ps1 -Modo cierre
+```
+
+Esto:
+- Prepara entorno (dev_env.ps1)
+- Ejecuta `flutter pub get`
+- Ejecuta `flutter analyze`
+- Ejecuta `flutter test` (usar `-SkipTests` para saltarlo)
+- Pide mensaje de commit (dejar vacío para no commitear)
+- Si hay commit, hace `git pull --rebase --autostash origin main` y luego `git push origin main`
+
+**Entre inicio y cierre, el flujo es normal:**
+
+1. Crear rama: `git checkout -b feat/<tema>`
+2. Desarrollar
+3. Commit pequeno y descriptivo
+4. Al cerrar jornada, el script se encarga de validar, sincronizar y pushear
+
+### Flujo manual (si preferís no usar el script)
+
 1. `git pull --rebase origin main`
 2. Crear rama: `git checkout -b feat/<tema>`
 3. Desarrollar
