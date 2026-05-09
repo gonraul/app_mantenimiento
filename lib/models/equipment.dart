@@ -105,7 +105,7 @@ class Equipment {
     return Equipment(
       id: id,
       title: (docData['title'] as String?) ?? '',
-      description: (docData['description'] as String?) ?? '',
+      description: _filterGeminiDescription((docData['description'] as String?) ?? ''),
       status: (docData['status'] as String?) ?? 'pendiente',
       priority: (docData['priority'] as String?) ?? 'media',
       location: (docData['location'] as String?) ?? '',
@@ -115,5 +115,34 @@ class Equipment {
       tags: List<String>.from(docData['tags'] ?? const <String>[]),
       media: normalizedMedia,
     );
+  }
+
+  static String _normalizeLegacyText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .trim();
+  }
+
+  static bool _isLegacyGeminiReplyText(String value) {
+    final normalized = _normalizeLegacyText(value);
+    if (normalized.isEmpty) return false;
+
+    return normalized.contains('hipotesis') ||
+        normalized.startsWith('¡dale,') ||
+        normalized.startsWith('dale,') ||
+        normalized.startsWith('aca estoy');
+  }
+
+  static String _filterGeminiDescription(String description) {
+    if (!_isLegacyGeminiReplyText(description)) {
+      return description;
+    }
+    // Si el description es Gemini text, retorna vacío (se mostrará el título nada más)
+    return '';
   }
 }

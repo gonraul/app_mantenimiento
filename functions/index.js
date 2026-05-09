@@ -4,6 +4,7 @@ const admin = require("firebase-admin");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 const { BotFrameworkAdapter } = require("botbuilder");
+const { OAuth2Client } = require("google-auth-library");
 const path = require("path");
 const { randomUUID } = require("crypto");
 
@@ -1112,6 +1113,120 @@ function inferMediaType(mimeType = "") {
 	return "file";
 }
 
+function inferMediaTypeFromName(fileName = "") {
+	const ext = path.extname(String(fileName || "")).toLowerCase();
+	if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic"].includes(ext)) {
+		return "image";
+	}
+	if ([".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"].includes(ext)) {
+		return "video";
+	}
+	return "file";
+}
+
+function getExtensionFromFileName(fileName = "") {
+	return path.extname(String(fileName || "")).toLowerCase();
+}
+
+async function getBotFrameworkAccessToken() {
+	const appId = process.env.MICROSOFT_APP_ID || "";
+	const appPassword = process.env.MICROSOFT_APP_PASSWORD || "";
+	if (!appId || !appPassword) {
+		return null;
+	}
+
+	const payload = new URLSearchParams({
+		grant_type: "client_credentials",
+		client_id: appId,
+		client_secret: appPassword,
+		scope: "https://api.botframework.com/.default",
+	});
+
+	const tokenResponse = await axios.post(
+		"https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+		payload.toString(),
+		{
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			timeout: 30000,
+		},
+	);
+
+	return tokenResponse?.data?.access_token || null;
+}
+
+function parseTeamsMediaAttachments(activity = {}) {
+	const attachments = Array.isArray(activity?.attachments) ? activity.attachments : [];
+	const out = [];
+
+	for (const attachment of attachments) {
+		const contentType = String(attachment?.contentType || "").toLowerCase();
+		const contentUrl = String(attachment?.contentUrl || attachment?.content?.downloadUrl || "").trim();
+		const name = String(attachment?.name || "").trim();
+		if (!contentUrl) continue;
+
+		const byMime = contentType.startsWith("image/") || contentType.startsWith("video/");
+		const inferredType = byMime
+			? inferMediaType(contentType)
+			: inferMediaTypeFromName(name || contentUrl);
+		if (!["image", "video"].includes(inferredType)) continue;
+
+		out.push({
+			contentUrl,
+			contentType,
+			name,
+			mediaType: inferredType,
+		});
+	}
+
+	return out;
+}
+
+async function uploadTeamsAttachmentToStorage({
+	attachment,
+	storagePath,
+	botAccessToken,
+}) {
+	const headers = {};
+	if (botAccessToken) {
+		headers.Authorization = `Bearer ${botAccessToken}`;
+	}
+
+	const mediaResponse = await axios.get(attachment.contentUrl, {
+		responseType: "arraybuffer",
+		headers,
+		maxRedirects: 5,
+		timeout: 30000,
+	});
+
+	const bucket = admin.storage().bucket();
+	const file = bucket.file(storagePath);
+	const downloadToken = randomUUID();
+	const contentType =
+		attachment.contentType ||
+		mediaResponse.headers["content-type"] ||
+		"application/octet-stream";
+
+	await file.save(Buffer.from(mediaResponse.data), {
+		metadata: {
+			contentType,
+			metadata: {
+				firebaseStorageDownloadTokens: downloadToken,
+			},
+		},
+		resumable: false,
+	});
+
+	return {
+		storagePath,
+		downloadURL: buildFirebaseDownloadUrl(bucket.name, storagePath, downloadToken),
+		mediaType: inferMediaType(contentType),
+		contentType,
+		sizeBytes: Buffer.byteLength(mediaResponse.data),
+	};
+}
+
 function buildFirebaseDownloadUrl(bucketName, storagePath, token) {
 	const encodedPath = encodeURIComponent(storagePath);
 	return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedPath}?alt=media&token=${token}`;
@@ -1534,13 +1649,14 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 			}
 
 			const textoTecnico = String(turnContext.activity.text || "").trim();
-			if (!textoTecnico) {
-				await turnContext.sendActivity("No recibi texto en el mensaje.");
+			const mediaAttachments = parseTeamsMediaAttachments(turnContext.activity);
+			if (!textoTecnico && mediaAttachments.length === 0) {
+				await turnContext.sendActivity("No recibi texto ni adjuntos en el mensaje.");
 				return;
 			}
 
 			const tecnico = buildTeamsTechnicianRef(turnContext.activity);
-			const intentMode = detectIntentMode(textoTecnico);
+			const intentMode = textoTecnico ? detectIntentMode(textoTecnico) : "reporte";
 			const equipoName = extractEquipoNameFromConsulta(textoTecnico);
 
 			if (intentMode === "reporte") {
@@ -1548,15 +1664,105 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 					textoTecnico,
 					equipoName,
 				});
-				await equipoRef.collection("eventos").add({
-					texto: textoTecnico,
+				const eventoRef = await equipoRef.collection("eventos").add({
+					texto: textoTecnico || "Adjunto recibido desde Teams",
 					tipo: "reporte",
 					tecnico: tecnico.id || tecnico.name || "teams",
 					canal: "teams",
+					has_attachments: mediaAttachments.length > 0,
+					attachments_count: mediaAttachments.length,
 					timestamp: admin.firestore.FieldValue.serverTimestamp(),
 				});
 
-				await turnContext.sendActivity("ok. registrado");
+				const mediaResultados = [];
+				if (mediaAttachments.length > 0) {
+					let botAccessToken = null;
+					try {
+						botAccessToken = await getBotFrameworkAccessToken();
+					} catch (tokenError) {
+						logger.error("teamsWebhook: no se pudo obtener token bot para adjuntos", {
+							error: tokenError?.message,
+						});
+					}
+
+					let photoIndex = 1;
+					let videoIndex = 1;
+
+					for (const attachment of mediaAttachments) {
+						const fallbackExt =
+							getExtensionFromMime(attachment.contentType) ||
+							getExtensionFromFileName(attachment.name || attachment.contentUrl) ||
+							(attachment.mediaType === "video" ? ".mp4" : ".jpg");
+
+						const fileBaseName = attachment.mediaType === "video"
+							? `video_${String(videoIndex).padStart(3, "0")}`
+							: `foto_${String(photoIndex).padStart(3, "0")}`;
+						const fileName = `${fileBaseName}${fallbackExt}`;
+						const storagePath = `equipos/${equipoRef.id}/eventos/${eventoRef.id}/${fileName}`;
+
+						try {
+							const uploaded = await uploadTeamsAttachmentToStorage({
+								attachment,
+								storagePath,
+								botAccessToken,
+							});
+
+							await eventoRef.collection("archivos").add({
+								tipo: uploaded.mediaType,
+								url: uploaded.downloadURL,
+								storagePath: uploaded.storagePath,
+								nombre: attachment.name || fileName,
+								contentType: uploaded.contentType,
+								sizeBytes: uploaded.sizeBytes,
+								source: "teams",
+								timestamp: admin.firestore.FieldValue.serverTimestamp(),
+								createdAt: admin.firestore.FieldValue.serverTimestamp(),
+							});
+
+							if (attachment.mediaType === "video") {
+								videoIndex += 1;
+							} else {
+								photoIndex += 1;
+							}
+
+							mediaResultados.push({
+								ok: true,
+								fileName,
+								storagePath,
+							});
+						} catch (mediaError) {
+							logger.error("teamsWebhook: error al guardar adjunto", {
+								equipoId: equipoRef.id,
+								eventoId: eventoRef.id,
+								contentUrl: attachment.contentUrl,
+								error: mediaError?.message,
+							});
+
+							mediaResultados.push({
+								ok: false,
+								contentUrl: attachment.contentUrl,
+								error: mediaError?.message || "Error desconocido",
+							});
+						}
+					}
+
+					const okCount = mediaResultados.filter((item) => item.ok).length;
+					await eventoRef.set({
+						attachments_uploaded: okCount,
+						attachments_failed: mediaResultados.length - okCount,
+						attachments_result: mediaResultados,
+						updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+					}, { merge: true });
+				}
+
+				if (mediaAttachments.length > 0) {
+					const uploadedCount = mediaResultados.filter((item) => item.ok).length;
+					await turnContext.sendActivity(
+						`ok. registrado. adjuntos guardados: ${uploadedCount}/${mediaAttachments.length}`,
+					);
+				} else {
+					await turnContext.sendActivity("ok. registrado");
+				}
 				return;
 			}
 
@@ -1613,6 +1819,272 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 		});
 	}
 });
+
+// ─── Google Chat Bot ─────────────────────────────────────────────────────────
+
+const GOOGLE_CHAT_AUDIENCE = "https://chat.googleapis.com";
+
+/**
+ * Verifica que el request venga efectivamente de Google Chat
+ * validando el Bearer JWT del header Authorization.
+ * Retorna el payload decodificado o lanza error si es invalido.
+ */
+async function verifyGoogleChatRequest(request) {
+	const authHeader = request.headers?.authorization || "";
+	if (!authHeader.startsWith("Bearer ")) {
+		throw new Error("Missing or invalid Authorization header");
+	}
+	const token = authHeader.slice("Bearer ".length).trim();
+	const client = new OAuth2Client();
+	const ticket = await client.verifyIdToken({
+		idToken: token,
+		audience: GOOGLE_CHAT_AUDIENCE,
+	});
+	return ticket.getPayload();
+}
+
+/**
+ * Construye la referencia canonica del tecnico desde el evento de Google Chat.
+ * Equivalente a buildTeamsTechnicianRef para el canal gchat.
+ */
+function buildGoogleChatTechnicianRef(event = {}) {
+	const sender = event?.message?.sender || event?.user || {};
+	const space = event?.space || {};
+	const message = event?.message || {};
+
+	return {
+		id: sender.name || null,
+		displayName: sender.displayName || null,
+		email: sender.email || null,
+		spaceId: space.name || null,
+		spaceType: space.type || null,
+		messageId: message.name || null,
+		channelId: "gchat",
+	};
+}
+
+/**
+ * Obtiene historial de reportes del tecnico desde mensajes_gchat.
+ * Equivalente a fetchTeamsHistoryContext para el canal gchat.
+ */
+async function fetchGoogleChatHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
+	if (!tecnicoId) {
+		return [];
+	}
+
+	const snapshot = await db
+		.collection("mensajes_gchat")
+		.where("tecnico.id", "==", tecnicoId)
+		.limit(120)
+		.get();
+
+	const ordered = [...snapshot.docs].sort((a, b) => {
+		const ta = a.data()?.timestamp?.toMillis?.() || 0;
+		const tb = b.data()?.timestamp?.toMillis?.() || 0;
+		return tb - ta;
+	});
+
+	const normalizedEquipo = normalizeText(equipoName || "");
+	const filtered = ordered.filter((doc) => {
+		const data = doc.data() || {};
+		if (data.modo !== "reporte") {
+			return false;
+		}
+		if (!normalizedEquipo) {
+			return true;
+		}
+		const msg = normalizeText(data.mensaje_original || "");
+		const equipo = normalizeText(data.equipo_nombre_consulta || data?.respuesta_ia_json?.equipo || "");
+		return (equipo && (equipo.includes(normalizedEquipo) || normalizedEquipo.includes(equipo))) || msg.includes(normalizedEquipo);
+	});
+
+	return filtered.slice(0, limit).map((doc) => {
+		const d = doc.data() || {};
+		return {
+			fecha: d.timestamp?.toDate?.()?.toISOString?.() || null,
+			mensaje: d.mensaje_original || "",
+			respuesta: d.respuesta_ia_tecnica || d.respuesta_ia || "",
+		};
+	});
+}
+
+/**
+ * Llama a Gemini en modo consulta para Google Chat.
+ * Equivalente a runTeamsGeminiConsultation para el canal gchat.
+ */
+async function runGoogleChatGeminiConsultation({ textoTecnico, historial }) {
+	const apiKey = process.env.GEMINI_API_KEY;
+	if (!apiKey) {
+		throw new Error("Falta secreto GEMINI_API_KEY");
+	}
+
+	const genAI = new GoogleGenerativeAI(apiKey);
+	const model = genAI.getGenerativeModel({
+		model: GEMINI_MODEL,
+		systemInstruction: fieldChiefSystemInstruction,
+	});
+
+	const historialPrompt = historial.length
+		? historial
+			.map((h, idx) => `#${idx + 1} | fecha=${h.fecha || "sin_fecha"} | tecnico=${h.mensaje} | analisis=${h.respuesta || "sin_analisis"}`)
+			.join("\n")
+		: "Sin historial previo para este tecnico.";
+
+	const userPrompt = [
+		"Contexto: mantenimiento hospitalario en Google Chat.",
+		"Responde en espanol rioplatense, concreto y tecnico.",
+		"Si no hay datos suficientes, pedi 1 dato faltante puntual.",
+		"[Historial Firestore del tecnico]",
+		historialPrompt,
+		"[Consulta actual]",
+		textoTecnico,
+	].join("\n");
+
+	const result = await model.generateContent({
+		contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+	});
+
+	const text = result.response.text()?.trim();
+	return ensureTechnicalResponseFormat(text, textoTecnico);
+}
+
+/**
+ * Formatea una respuesta de texto en un Card de Google Chat para mejor legibilidad.
+ */
+function buildGoogleChatTextResponse(text) {
+	return {
+		text,
+	};
+}
+
+exports.googleChatWebhook = onRequest({}, async (request, response) => {
+	if (request.method !== "POST") {
+		return response.status(405).send("Metodo no permitido");
+	}
+
+	// Verificar autenticidad del request de Google Chat
+	try {
+		await verifyGoogleChatRequest(request);
+	} catch (authError) {
+		logger.warn("googleChatWebhook: JWT verification failed", {
+			error: authError?.message,
+		});
+		return response.status(401).json({ error: "Unauthorized" });
+	}
+
+	const event = request.body || {};
+	const eventType = event?.type;
+
+	// Google Chat envia ADDED_TO_SPACE cuando el bot es agregado
+	if (eventType === "ADDED_TO_SPACE") {
+		const spaceName = event?.space?.displayName || "el espacio";
+		return response.json(buildGoogleChatTextResponse(
+			`Hola! Soy el Asistente Tecnico del Hospital Austral en *${spaceName}*. Puedo registrar reportes de fallas y consultar historial de equipos. Escribime directamente.`
+		));
+	}
+
+	// Ignorar eventos que no sean mensajes de texto
+	if (eventType !== "MESSAGE") {
+		return response.json({ text: "" });
+	}
+
+	const textoTecnico = String(event?.message?.text || event?.message?.argumentText || "").trim();
+	if (!textoTecnico) {
+		return response.json(buildGoogleChatTextResponse("No recibi texto en el mensaje."));
+	}
+
+	const tecnico = buildGoogleChatTechnicianRef(event);
+	const intentMode = detectIntentMode(textoTecnico);
+	const equipoName = extractEquipoNameFromConsulta(textoTecnico);
+
+	if (intentMode === "reporte") {
+		try {
+			await db.collection("mensajes_gchat").add({
+				modo: "reporte",
+				canal: "gchat",
+				mensaje_original: textoTecnico,
+				equipo_nombre_consulta: equipoName || null,
+				tecnico,
+				timestamp: admin.firestore.FieldValue.serverTimestamp(),
+			});
+			return response.json(buildGoogleChatTextResponse("ok. registrado"));
+		} catch (saveError) {
+			logger.error("googleChatWebhook: error al guardar reporte", {
+				error: saveError?.message,
+				tecnicoId: tecnico.id,
+			});
+			return response.json(buildGoogleChatTextResponse("Error al registrar el reporte. Intenta nuevamente."));
+		}
+	}
+
+	// Modo consulta
+	let respuestaConsulta = "No pude resolver tu consulta en este momento.";
+	let iaStatus = "error";
+	let iaErrorCode = "UNKNOWN";
+
+	try {
+		const historial = await fetchGoogleChatHistoryContext({
+			tecnicoId: tecnico.id,
+			equipoName,
+			limit: 8,
+		});
+
+		respuestaConsulta = await runGoogleChatGeminiConsultation({
+			textoTecnico,
+			historial,
+		});
+		iaStatus = "ok";
+		iaErrorCode = null;
+
+		await db.collection("mensajes_gchat").add({
+			modo: "consulta",
+			canal: "gchat",
+			mensaje_original: textoTecnico,
+			respuesta_ia: respuestaConsulta,
+			tecnico,
+			equipo_nombre_consulta: equipoName || null,
+			contexto_reportes_usados: historial.length,
+			ia_status: iaStatus,
+			ia_error_code: iaErrorCode,
+			ia_model: GEMINI_MODEL,
+			timestamp: admin.firestore.FieldValue.serverTimestamp(),
+		});
+	} catch (consultaError) {
+		if (consultaError?.status === 429) {
+			respuestaConsulta = "Servicio de IA no disponible por cuota agotada. Reintentar mas tarde.";
+			iaErrorCode = "QUOTA_EXCEEDED";
+		} else if (consultaError?.status === 404) {
+			respuestaConsulta = "Modelo de IA no disponible actualmente. Se requiere actualizar configuracion del modelo.";
+			iaErrorCode = "MODEL_NOT_FOUND";
+		} else if (consultaError?.message === "Falta secreto GEMINI_API_KEY") {
+			respuestaConsulta = "Configuracion de IA incompleta. Falta GEMINI_API_KEY.";
+			iaErrorCode = "MISSING_API_KEY_SECRET";
+		}
+
+		logger.error("googleChatWebhook: error en consulta", {
+			error: consultaError?.message,
+			stack: consultaError?.stack,
+			tecnicoId: tecnico.id,
+		});
+
+		await db.collection("mensajes_gchat").add({
+			modo: "consulta",
+			canal: "gchat",
+			mensaje_original: textoTecnico,
+			respuesta_ia: respuestaConsulta,
+			tecnico,
+			equipo_nombre_consulta: equipoName || null,
+			ia_status: iaStatus,
+			ia_error_code: iaErrorCode,
+			ia_model: GEMINI_MODEL,
+			timestamp: admin.firestore.FieldValue.serverTimestamp(),
+		}).catch(() => {});
+	}
+
+	return response.json(buildGoogleChatTextResponse(respuestaConsulta));
+});
+
+// ─── WhatsApp Webhook ─────────────────────────────────────────────────────────
 
 exports.whatsappWebhook = onRequest({}, async (request, response) => {
 	try {

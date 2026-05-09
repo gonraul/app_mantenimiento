@@ -85,6 +85,12 @@ function shouldDeleteLegacyEvent(data) {
   };
 }
 
+function isEquipoEventoDoc(docRef) {
+  const eventosCollection = docRef?.parent;
+  const equipoDoc = eventosCollection?.parent;
+  return eventosCollection?.id === "eventos" && equipoDoc?.parent?.id === "equipos";
+}
+
 async function countMensajesIa() {
   const snap = await db.collection("mensajes_ia").get();
   return { total: snap.size };
@@ -178,6 +184,7 @@ async function countPdfs() {
 async function countLegacyEventsToDelete() {
   const snap = await db.collectionGroup("eventos").get();
   let affectedDocs = 0;
+  let totalEventosEnEquipos = 0;
   const byReason = {
     tipo_consulta: 0,
     texto_contiene_hipotesis: 0,
@@ -187,6 +194,9 @@ async function countLegacyEventsToDelete() {
   };
 
   for (const doc of snap.docs) {
+    if (!isEquipoEventoDoc(doc.ref)) continue;
+    totalEventosEnEquipos += 1;
+
     const { shouldDelete, reasons } = shouldDeleteLegacyEvent(doc.data() || {});
     if (!shouldDelete) continue;
     affectedDocs += 1;
@@ -196,7 +206,7 @@ async function countLegacyEventsToDelete() {
   }
 
   return {
-    totalEventos: snap.size,
+    totalEventos: totalEventosEnEquipos,
     affectedDocs,
     byReason,
   };
@@ -217,6 +227,8 @@ async function deleteLegacyEvents() {
   let batch = db.batch();
 
   for (const doc of snap.docs) {
+    if (!isEquipoEventoDoc(doc.ref)) continue;
+
     scanned += 1;
     const { shouldDelete, reasons } = shouldDeleteLegacyEvent(doc.data() || {});
     if (!shouldDelete) continue;

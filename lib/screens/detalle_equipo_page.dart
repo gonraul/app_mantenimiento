@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../core/app_error_mapper.dart';
 import '../models/comment_model.dart';
 import '../models/equipment.dart';
+import '../models/equipment_event_media.dart';
 import '../models/media_item.dart';
 import '../services/equipment_repository.dart';
 import '../theme/app_theme.dart';
@@ -29,6 +30,37 @@ class DetalleEquipoPage extends StatelessWidget {
       GetEquipmentDetailStreamUseCase(_repository);
   static final DeleteMediaFromEquipmentUseCase _deleteMediaUseCase =
       DeleteMediaFromEquipmentUseCase(_repository);
+
+  static String _normalizeLegacyText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .trim();
+  }
+
+  static bool _isLegacyGeminiReplyText(String value) {
+    final normalized = _normalizeLegacyText(value);
+    if (normalized.isEmpty) return false;
+
+    return normalized.contains('hipotesis') ||
+        normalized.startsWith('¡dale,') ||
+        normalized.startsWith('dale,') ||
+      normalized.startsWith('aca estoy');
+  }
+
+  static bool _shouldIncludeMediaItem(MediaItem media) {
+    if (media.source.isEmpty) return false;
+
+    final caption = media.caption.trim();
+    final name = media.name.trim();
+    if (_isLegacyGeminiReplyText(caption)) return false;
+    if (_isLegacyGeminiReplyText(name)) return false;
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,12 +102,15 @@ class DetalleEquipoPage extends StatelessWidget {
         final equipoNombre = equipment.title.trim().isEmpty
             ? 'Detalle de equipo'
             : equipment.title.trim();
-        final description = equipment.description.trim();
+        final rawDescription = equipment.description.trim();
+        final description = _isLegacyGeminiReplyText(rawDescription)
+          ? ''
+          : rawDescription;
         final useDesktopLayout =
           MediaQuery.of(context).size.width > _desktopLayoutBreakpoint;
 
         final historial = equipment.media
-            .where((media) => media.source.isNotEmpty)
+            .where(_shouldIncludeMediaItem)
             .map(
               (media) => _HistorialItem(
                 source: media.source,
@@ -165,6 +200,9 @@ class DetalleEquipoPage extends StatelessWidget {
                   child: _DetailContent(
                     description: description,
                     historial: historial,
+                    eventMediaStream: _repository.watchEventPhotosByEquipment(
+                      equipment.id,
+                    ),
                     equipoNombre: equipoNombre,
                     formatDate: _formatDate,
                     resolveMediaUrlForOpen: _resolveMediaUrlForOpen,
@@ -292,6 +330,7 @@ class _DetailContent extends StatelessWidget {
   const _DetailContent({
     required this.description,
     required this.historial,
+    required this.eventMediaStream,
     required this.equipoNombre,
     required this.formatDate,
     required this.resolveMediaUrlForOpen,
@@ -302,6 +341,7 @@ class _DetailContent extends StatelessWidget {
 
   final String description;
   final List<_HistorialItem> historial;
+  final Stream<List<EquipmentEventMedia>> eventMediaStream;
   final String equipoNombre;
   final String Function(DateTime date) formatDate;
   final Future<String> Function(String source) resolveMediaUrlForOpen;
@@ -393,89 +433,110 @@ class _DetailContent extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Expanded(
-          child: historial.isEmpty
-              ? const Center(
+          child: StreamBuilder<List<EquipmentEventMedia>>(
+            stream: eventMediaStream,
+            builder: (context, snapshot) {
+              final eventGroups = snapshot.data ?? const <EquipmentEventMedia>[];
+
+              if (snapshot.connectionState == ConnectionState.waiting &&
+                  eventGroups.isEmpty &&
+                  historial.isEmpty) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (eventGroups.isNotEmpty) {
+                return _EventPhotosList(
+                  eventGroups: eventGroups,
+                  formatDate: formatDate,
+                  resolveMediaUrlForOpen: resolveMediaUrlForOpen,
+                  equipoNombre: equipoNombre,
+                );
+              }
+
+              if (historial.isEmpty) {
+                return const Center(
                   child: Text(
                     'No hay archivos cargados aun.',
                     style: TextStyle(color: AppColors.darkGray),
                   ),
-                )
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    Widget buildCard(_HistorialItem item) {
-                      return _HistorialCard(
-                        mediaSource: item.source,
-                        kind: item.kind,
-                        dateText: item.uploadedAt == null
-                            ? 'Fecha no disponible'
-                            : formatDate(item.uploadedAt!),
-                        equipmentId: equipmentId,
-                        mediaDocId: item.mediaDocId,
-                        name: item.name,
-                        caption: item.caption,
-                        onTap: () async {
-                          final openUrl = await resolveMediaUrlForOpen(
-                            item.source,
+                );
+              }
+
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  Widget buildCard(_HistorialItem item) {
+                    return _HistorialCard(
+                      mediaSource: item.source,
+                      kind: item.kind,
+                      dateText: item.uploadedAt == null
+                          ? 'Fecha no disponible'
+                          : formatDate(item.uploadedAt!),
+                      equipmentId: equipmentId,
+                      mediaDocId: item.mediaDocId,
+                      name: item.name,
+                      caption: item.caption,
+                      onTap: () async {
+                        final openUrl = await resolveMediaUrlForOpen(item.source);
+
+                        if (item.kind == _ArchivoKind.image) {
+                          if (!context.mounted) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VisorImagenScreen(
+                                imageUrl: openUrl,
+                                titulo: equipoNombre,
+                                equipmentId: equipmentId,
+                                mediaDocId: item.mediaDocId,
+                              ),
+                            ),
                           );
+                          return;
+                        }
 
-                          if (item.kind == _ArchivoKind.image) {
-                            if (!context.mounted) return;
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VisorImagenScreen(
-                                  imageUrl: openUrl,
-                                  titulo: equipoNombre,
-                                  equipmentId: equipmentId,
-                                  mediaDocId: item.mediaDocId,
-                                ),
+                        if (item.kind == _ArchivoKind.video) {
+                          if (!context.mounted) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VisorVideoScreen(
+                                videoUrl: openUrl,
+                                titulo: equipoNombre,
+                                equipmentId: equipmentId,
+                                mediaDocId: item.mediaDocId,
                               ),
-                            );
-                            return;
-                          }
-
-                          if (item.kind == _ArchivoKind.video) {
-                            if (!context.mounted) return;
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => VisorVideoScreen(
-                                  videoUrl: openUrl,
-                                  titulo: equipoNombre,
-                                  equipmentId: equipmentId,
-                                  mediaDocId: item.mediaDocId,
-                                ),
-                              ),
-                            );
-                          }
-                        },
-                        onDelete: () => confirmAndDeleteFile(
-                          context: context,
-                          mediaSource: item.source,
-                          equipmentId: equipmentId,
-                        ),
-                      );
-                    }
-
-                    if (width > 900) {
-                      return GridView.extent(
-                        maxCrossAxisExtent: 400,
-                        mainAxisSpacing: 10,
-                        crossAxisSpacing: 10,
-                        childAspectRatio: 1.08,
-                        children: historial.map(buildCard).toList(),
-                      );
-                    }
-
-                    return ListView.separated(
-                      itemCount: historial.length,
-                      separatorBuilder: (_, index) =>
-                          const SizedBox(height: 12),
-                      itemBuilder: (context, index) => buildCard(historial[index]),
+                            ),
+                          );
+                        }
+                      },
+                      onDelete: () => confirmAndDeleteFile(
+                        context: context,
+                        mediaSource: item.source,
+                        equipmentId: equipmentId,
+                      ),
                     );
-                  },
-                ),
+                  }
+
+                  if (width > 900) {
+                    return GridView.extent(
+                      maxCrossAxisExtent: 400,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 1.08,
+                      children: historial.map(buildCard).toList(),
+                    );
+                  }
+
+                  return ListView.separated(
+                    itemCount: historial.length,
+                    separatorBuilder: (_, index) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) => buildCard(historial[index]),
+                  );
+                },
+              );
+            },
+          ),
         ),
       ],
     );
@@ -728,6 +789,196 @@ class _HistorialCardState extends State<_HistorialCard> {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EventPhotosList extends StatelessWidget {
+  const _EventPhotosList({
+    required this.eventGroups,
+    required this.formatDate,
+    required this.resolveMediaUrlForOpen,
+    required this.equipoNombre,
+  });
+
+  final List<EquipmentEventMedia> eventGroups;
+  final String Function(DateTime date) formatDate;
+  final Future<String> Function(String source) resolveMediaUrlForOpen;
+  final String equipoNombre;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      itemCount: eventGroups.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final event = eventGroups[index];
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 1.5,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF2FF),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        event.type.isEmpty ? 'evento' : event.type,
+                        style: const TextStyle(
+                          color: AppColors.azulAustral,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      event.timestamp == null
+                          ? 'Fecha no disponible'
+                          : formatDate(event.timestamp!),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.darkGray,
+                      ),
+                    ),
+                  ],
+                ),
+                if (event.text.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    event.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.darkGray,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: event.photos.map((photo) {
+                    return _EventPhotoThumb(
+                      item: photo,
+                      resolveMediaUrlForOpen: resolveMediaUrlForOpen,
+                      onOpen: (openUrl) {
+                        if (photo.type == MediaType.video) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VisorVideoScreen(
+                                videoUrl: openUrl,
+                                titulo: equipoNombre,
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => VisorImagenScreen(
+                              imageUrl: openUrl,
+                              titulo: equipoNombre,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _EventPhotoThumb extends StatelessWidget {
+  const _EventPhotoThumb({
+    required this.item,
+    required this.resolveMediaUrlForOpen,
+    required this.onOpen,
+  });
+
+  final MediaItem item;
+  final Future<String> Function(String source) resolveMediaUrlForOpen;
+  final void Function(String openUrl) onOpen;
+
+  bool _isRemoteUrl(String value) {
+    final lower = value.toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () async {
+        final openUrl = await resolveMediaUrlForOpen(item.source);
+        if (!context.mounted) return;
+        onOpen(openUrl);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 92,
+          height: 92,
+          child: FutureBuilder<String>(
+            future: resolveMediaUrlForOpen(item.source),
+            builder: (context, snapshot) {
+              final resolved = snapshot.data;
+              if (resolved != null && _isRemoteUrl(resolved)) {
+                return CachedNetworkImage(
+                  imageUrl: resolved,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    color: const Color(0xFFF0F3F8),
+                    child: const Icon(
+                      Icons.image_outlined,
+                      color: AppColors.azulAustral,
+                      size: 24,
+                    ),
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    color: const Color(0xFFF0F3F8),
+                    child: const Icon(
+                      Icons.broken_image_outlined,
+                      color: AppColors.azulAustral,
+                      size: 24,
+                    ),
+                  ),
+                );
+              }
+
+              return Container(
+                color: const Color(0xFFF0F3F8),
+                child: const Icon(
+                  Icons.image_outlined,
+                  color: AppColors.azulAustral,
+                  size: 24,
+                ),
+              );
+            },
           ),
         ),
       ),

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/comment_model.dart';
 import '../models/equipment.dart';
+import '../models/equipment_event_media.dart';
 import '../models/media_item.dart';
 import '../models/task_model.dart';
 
@@ -17,7 +18,7 @@ class EquipmentRepository {
   final FirebaseFirestore _firestore;
   final FirebaseStorage _storage;
   static const String _topicsCollection = 'equipos';
-  static const String _legacyTopicsCollection = 'pdfs';
+  static const String _blockedEquipmentTitle = 'ENCENDIDO CHILLER 4';
 
   static const List<String> _videoExtensions = <String>[
     'mp4',
@@ -27,11 +28,31 @@ class EquipmentRepository {
     'webm',
   ];
 
+  static String _normalizeLegacyText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .trim();
+  }
+
+  static bool _isLegacyGeminiReplyText(String value) {
+    final normalized = _normalizeLegacyText(value);
+    if (normalized.isEmpty) return false;
+
+    return normalized.contains('hipotesis') ||
+        normalized.startsWith('¡dale,') ||
+        normalized.startsWith('dale,') ||
+        normalized.startsWith('aca estoy');
+  }
+
   Stream<List<Equipment>> getEquipments() {
     final controller = StreamController<List<Equipment>>();
 
     QuerySnapshot<Map<String, dynamic>>? primarySnapshot;
-    QuerySnapshot<Map<String, dynamic>>? legacySnapshot;
 
     Future<List<Equipment>> mapSnapshot(
       QuerySnapshot<Map<String, dynamic>> snapshot,
@@ -39,6 +60,8 @@ class EquipmentRepository {
       return Future.wait(
         snapshot.docs.map((doc) async {
           List<Map<String, dynamic>> mediaDocs = const <Map<String, dynamic>>[];
+          
+          // Lectura legacy: equipos/{id}/media
           try {
             final mediaSnapshot = await doc.reference.collection('media').get();
             mediaDocs = mediaSnapshot.docs
@@ -47,34 +70,60 @@ class EquipmentRepository {
           } catch (e) {
             debugPrint('No se pudo cargar media para ${doc.id}: $e');
           }
+          
+          // Lectura nueva: equipos/{id}/eventos/{eventoId}/archivos
+          final allEventArchivos = <Map<String, dynamic>>[];
+          try {
+            final eventosSnapshot = await doc.reference
+                .collection('eventos')
+                .get();
+            
+            for (final eventDoc in eventosSnapshot.docs) {
+              try {
+                final archivosSnapshot = await eventDoc.reference
+                    .collection('archivos')
+                    .get();
+                
+                for (final archivoDoc in archivosSnapshot.docs) {
+                  allEventArchivos.add({
+                    'id': archivoDoc.id,
+                    ...archivoDoc.data(),
+                  });
+                }
+              } catch (e) {
+                debugPrint('Error cargando archivos de evento ${eventDoc.id}: $e');
+              }
+            }
+          } catch (e) {
+            debugPrint('No se pudieron cargar eventos para ${doc.id}: $e');
+          }
+          
+          // Mergear: nuevos archivos toman prioridad
+          final mergedMediaDocs = [...allEventArchivos, ...mediaDocs];
 
           return Equipment.fromFirestore(
             id: doc.id,
             docData: doc.data(),
-            mediaDocs: mediaDocs,
+            mediaDocs: mergedMediaDocs,
           );
         }),
       );
     }
 
-    Future<void> emitMerged() async {
+    Future<void> emitPrimary() async {
       try {
         final primary = primarySnapshot == null
             ? const <Equipment>[]
             : await mapSnapshot(primarySnapshot!);
-        final legacy = legacySnapshot == null
-            ? const <Equipment>[]
-            : await mapSnapshot(legacySnapshot!);
 
-        final merged = <String, Equipment>{};
-        for (final equipment in primary) {
-          merged[equipment.id] = equipment;
-        }
-        for (final equipment in legacy) {
-          merged.putIfAbsent(equipment.id, () => equipment);
-        }
+        final filtered = primary
+            .where(
+              (equipment) =>
+                  equipment.title.trim().toUpperCase() != _blockedEquipmentTitle,
+            )
+            .toList();
 
-        controller.add(merged.values.toList());
+        controller.add(filtered);
       } catch (e, st) {
         controller.addError(e, st);
       }
@@ -86,25 +135,13 @@ class EquipmentRepository {
         .listen(
           (snapshot) {
             primarySnapshot = snapshot;
-            unawaited(emitMerged());
-          },
-          onError: controller.addError,
-        );
-
-    final legacySub = _firestore
-        .collection(_legacyTopicsCollection)
-        .snapshots()
-        .listen(
-          (snapshot) {
-            legacySnapshot = snapshot;
-            unawaited(emitMerged());
+            unawaited(emitPrimary());
           },
           onError: controller.addError,
         );
 
     controller.onCancel = () async {
       await primarySub.cancel();
-      await legacySub.cancel();
     };
 
     return controller.stream;
@@ -143,26 +180,25 @@ class EquipmentRepository {
   Stream<Equipment?> watchEquipmentById(String id) {
     final controller = StreamController<Equipment?>();
     final primaryRef = _firestore.collection(_topicsCollection).doc(id);
-    final legacyRef = _firestore.collection(_legacyTopicsCollection).doc(id);
 
     DocumentSnapshot<Map<String, dynamic>>? primaryDoc;
-    DocumentSnapshot<Map<String, dynamic>>? legacyDoc;
 
     Future<void> emitResolved() async {
       try {
         final hasPrimary =
             primaryDoc?.exists == true && primaryDoc?.data() != null;
-        final hasLegacy = legacyDoc?.exists == true && legacyDoc?.data() != null;
 
-        if (!hasPrimary && !hasLegacy) {
+        if (!hasPrimary) {
           controller.add(null);
           return;
         }
 
-        final activeRef = hasPrimary ? primaryRef : legacyRef;
-        final activeDoc = hasPrimary ? primaryDoc! : legacyDoc!;
+        final activeRef = primaryRef;
+        final activeDoc = primaryDoc!;
 
         List<Map<String, dynamic>> mediaDocs = const <Map<String, dynamic>>[];
+        
+        // Lectura legacy: equipos/{id}/media
         try {
           final mediaSnapshot = await activeRef.collection('media').get();
           mediaDocs = mediaSnapshot.docs
@@ -171,12 +207,49 @@ class EquipmentRepository {
         } catch (e) {
           debugPrint('No se pudo cargar media para ${activeDoc.id}: $e');
         }
+        
+        // Lectura nueva: equipos/{id}/eventos/{eventoId}/archivos
+        final allEventArchivos = <Map<String, dynamic>>[];
+        try {
+          final eventosSnapshot = await activeRef
+              .collection('eventos')
+              .get();
+          
+          for (final eventDoc in eventosSnapshot.docs) {
+            try {
+              final archivosSnapshot = await eventDoc.reference
+                  .collection('archivos')
+                  .get();
+              
+              for (final archivoDoc in archivosSnapshot.docs) {
+                allEventArchivos.add({
+                  'id': archivoDoc.id,
+                  ...archivoDoc.data(),
+                });
+              }
+            } catch (e) {
+              debugPrint('Error cargando archivos de evento ${eventDoc.id}: $e');
+            }
+          }
+        } catch (e) {
+          debugPrint('No se pudieron cargar eventos para ${activeDoc.id}: $e');
+        }
+        
+        // Mergear: nuevos archivos toman prioridad
+        final mergedMediaDocs = [...allEventArchivos, ...mediaDocs];
+
+        final blockedTitle =
+            (activeDoc.data()?['title'] as String?)?.trim().toUpperCase() ?? '';
+        if (blockedTitle == _blockedEquipmentTitle) {
+          controller.add(null);
+          return;
+        }
 
         controller.add(
           Equipment.fromFirestore(
             id: activeDoc.id,
             docData: activeDoc.data()!,
-            mediaDocs: mediaDocs,
+            mediaDocs: mergedMediaDocs,
           ),
         );
       } catch (e, st) {
@@ -192,17 +265,8 @@ class EquipmentRepository {
       onError: controller.addError,
     );
 
-    final legacySub = legacyRef.snapshots().listen(
-      (snapshot) {
-        legacyDoc = snapshot;
-        unawaited(emitResolved());
-      },
-      onError: controller.addError,
-    );
-
     controller.onCancel = () async {
       await primarySub.cancel();
-      await legacySub.cancel();
     };
 
     return controller.stream;
@@ -281,6 +345,69 @@ class EquipmentRepository {
 
   String _sanitizeFileName(String fileName) {
     return fileName.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+  }
+
+  DateTime? _dateFromAny(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  Stream<List<EquipmentEventMedia>> watchEventPhotosByEquipment(
+    String equipmentId,
+  ) {
+    final eventosRef = _firestore
+        .collection(_topicsCollection)
+        .doc(equipmentId)
+        .collection('eventos');
+
+    return eventosRef
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .asyncMap((snapshot) async {
+      final out = <EquipmentEventMedia>[];
+
+      for (final eventDoc in snapshot.docs) {
+        final eventData = eventDoc.data();
+        final text = (eventData['texto'] as String?)?.trim() ?? '';
+        final type = (eventData['tipo'] as String?)?.trim() ?? '';
+        final timestamp = _dateFromAny(
+          eventData['timestamp'] ?? eventData['createdAt'] ?? eventData['created_at'],
+        );
+
+        QuerySnapshot<Map<String, dynamic>> archivosSnapshot;
+        try {
+          archivosSnapshot = await eventDoc.reference
+              .collection('archivos')
+              .orderBy('timestamp', descending: false)
+              .get();
+        } catch (_) {
+          archivosSnapshot = await eventDoc.reference.collection('archivos').get();
+        }
+
+        final photos = archivosSnapshot.docs
+            .map((doc) => MediaItem.fromFirestore({'id': doc.id, ...doc.data()}))
+            .where((item) => item.source.isNotEmpty && item.type == MediaType.image)
+            .toList();
+
+        if (photos.isEmpty) {
+          continue;
+        }
+
+        out.add(
+          EquipmentEventMedia(
+            eventId: eventDoc.id,
+            text: text,
+            type: type,
+            timestamp: timestamp,
+            photos: photos,
+          ),
+        );
+      }
+
+      return out;
+    });
   }
 
   Future<void> createTopicWithMedia({

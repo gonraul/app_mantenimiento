@@ -65,16 +65,7 @@ class _TasksPageState extends State<TasksPage> {
     return Icons.build_rounded;
   }
 
-  Color _getPriorityColor(String priority) {
-    switch (priority) {
-      case 'alta':
-        return const Color(0xFFE53935);
-      case 'media':
-        return const Color(0xFFFB8C00);
-      default:
-        return AppColors.verdeAustral;
-    }
-  }
+  Color _getPriorityColor(String priority) => const Color(0xFF4CAF50);
 
   String _getPriorityLabel(String priority) {
     switch (priority) {
