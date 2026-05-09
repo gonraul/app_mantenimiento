@@ -1386,8 +1386,9 @@ async function fetchTeamsHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
 	}
 
 	const snapshot = await db
-		.collection("mensajes_teams")
-		.where("tecnico.id", "==", tecnicoId)
+		.collectionGroup("eventos")
+		.where("canal", "==", "teams")
+		.where("tecnico", "==", tecnicoId)
 		.limit(120)
 		.get();
 
@@ -1400,7 +1401,7 @@ async function fetchTeamsHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
 	const normalizedEquipo = normalizeText(equipoName || "");
 	const filtered = ordered.filter((doc) => {
 		const data = doc.data() || {};
-		if (data.modo !== "reporte") {
+		if (data.tipo !== "reporte") {
 			return false;
 		}
 
@@ -1408,8 +1409,9 @@ async function fetchTeamsHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
 			return true;
 		}
 
-		const msg = normalizeText(data.mensaje_original || "");
-		const equipo = normalizeText(data.equipo_nombre_consulta || data?.respuesta_ia_json?.equipo || "");
+		const msg = normalizeText(data.texto || "");
+		const equipoDocName = normalizeText(doc.ref.parent.parent?.id || "");
+		const equipo = normalizeText(equipoDocName);
 		return (equipo && (equipo.includes(normalizedEquipo) || normalizedEquipo.includes(equipo))) || msg.includes(normalizedEquipo);
 	});
 
@@ -1417,8 +1419,8 @@ async function fetchTeamsHistoryContext({ tecnicoId, equipoName, limit = 8 }) {
 		const d = doc.data() || {};
 		return {
 			fecha: d.timestamp?.toDate?.()?.toISOString?.() || null,
-			mensaje: d.mensaje_original || "",
-			respuesta: d.respuesta_ia_tecnica || d.respuesta_ia || "",
+			mensaje: d.texto || "",
+			respuesta: d?.ia?.respuesta || "",
 		};
 	});
 }
@@ -1459,6 +1461,54 @@ async function runTeamsGeminiConsultation({ textoTecnico, historial }) {
 	return ensureTechnicalResponseFormat(text, textoTecnico);
 }
 
+async function resolveOrCreateEquipoForTeams({ textoTecnico, equipoName }) {
+	const explicitId = extractEquipoIdFromText(textoTecnico);
+	if (explicitId) {
+		const explicitRef = db.collection("equipos").doc(explicitId);
+		const explicitSnap = await explicitRef.get();
+		if (explicitSnap.exists) {
+			return explicitRef;
+		}
+
+		await explicitRef.set({
+			nombre: equipoName || "Sin nombre",
+			tipo: "general",
+			ubicacion: "sin ubicacion",
+			title: equipoName || "Sin nombre",
+			createdAt: admin.firestore.FieldValue.serverTimestamp(),
+			updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+		}, { merge: true });
+		return explicitRef;
+	}
+
+	if (equipoName) {
+		const normalizedTarget = normalizeText(equipoName);
+		const snapshot = await db.collection("equipos").limit(300).get();
+		for (const doc of snapshot.docs) {
+			const data = doc.data() || {};
+			const legacyTitle = normalizeText(data.title || "");
+			const nombre = normalizeText(data.nombre || "");
+			const matches =
+				(legacyTitle && (legacyTitle.includes(normalizedTarget) || normalizedTarget.includes(legacyTitle))) ||
+				(nombre && (nombre.includes(normalizedTarget) || normalizedTarget.includes(nombre)));
+			if (matches) {
+				return doc.ref;
+			}
+		}
+	}
+
+	const newRef = db.collection("equipos").doc();
+	await newRef.set({
+		nombre: equipoName || "Sin nombre",
+		tipo: "general",
+		ubicacion: "sin ubicacion",
+		title: equipoName || "Sin nombre",
+		createdAt: admin.firestore.FieldValue.serverTimestamp(),
+		updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+	});
+	return newRef;
+}
+
 exports.teamsWebhook = onRequest({}, async (request, response) => {
 	if (request.method !== "POST") {
 		return response.status(405).send("Metodo no permitido");
@@ -1494,12 +1544,15 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 			const equipoName = extractEquipoNameFromConsulta(textoTecnico);
 
 			if (intentMode === "reporte") {
-				await db.collection("mensajes_teams").add({
-					modo: "reporte",
-					canal: "msteams",
-					mensaje_original: textoTecnico,
-					equipo_nombre_consulta: equipoName || null,
-					tecnico,
+				const equipoRef = await resolveOrCreateEquipoForTeams({
+					textoTecnico,
+					equipoName,
+				});
+				await equipoRef.collection("eventos").add({
+					texto: textoTecnico,
+					tipo: "reporte",
+					tecnico: tecnico.id || tecnico.name || "teams",
+					canal: "teams",
 					timestamp: admin.firestore.FieldValue.serverTimestamp(),
 				});
 
@@ -1525,19 +1578,6 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 				iaStatus = "ok";
 				iaErrorCode = null;
 
-				await db.collection("mensajes_teams").add({
-					modo: "consulta",
-					canal: "msteams",
-					mensaje_original: textoTecnico,
-					respuesta_ia: respuestaConsulta,
-					tecnico,
-					equipo_nombre_consulta: equipoName || null,
-					contexto_reportes_usados: historial.length,
-					ia_status: iaStatus,
-					ia_error_code: iaErrorCode,
-					ia_model: GEMINI_MODEL,
-					timestamp: admin.firestore.FieldValue.serverTimestamp(),
-				});
 			} catch (consultaError) {
 				if (consultaError?.status === 429) {
 					respuestaConsulta = "Servicio de IA no disponible por cuota agotada. Reintentar mas tarde.";
@@ -1556,18 +1596,6 @@ exports.teamsWebhook = onRequest({}, async (request, response) => {
 					tecnicoId: tecnico.id,
 				});
 
-				await db.collection("mensajes_teams").add({
-					modo: "consulta",
-					canal: "msteams",
-					mensaje_original: textoTecnico,
-					respuesta_ia: respuestaConsulta,
-					tecnico,
-					equipo_nombre_consulta: equipoName || null,
-					ia_status: iaStatus,
-					ia_error_code: iaErrorCode,
-					ia_model: GEMINI_MODEL,
-					timestamp: admin.firestore.FieldValue.serverTimestamp(),
-				});
 			}
 
 			await turnContext.sendActivity(respuestaConsulta);

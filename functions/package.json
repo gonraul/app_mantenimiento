@@ -6,7 +6,11 @@
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "migrate:firestore:preview": "node scripts/migrate_firestore_schema.js",
+    "migrate:firestore:apply": "node scripts/migrate_firestore_schema.js --apply",
+    "dedupe:equipos:preview": "node scripts/dedupe_equipos_firestore.js",
+    "dedupe:equipos:apply": "node scripts/dedupe_equipos_firestore.js --apply"
   },
   "engines": {
     "node": "22"
