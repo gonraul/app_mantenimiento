@@ -15,8 +15,8 @@ try {
 
     # --- INICIO DE JORNADA ---
     if ($Modo -eq 'inicio') {
-        Write-Output '==> git pull --rebase origin main'
-        git pull --rebase origin main
+        Write-Output '==> git pull --rebase --autostash origin main'
+        git pull --rebase --autostash origin main
         if ($LASTEXITCODE -ne 0) {
             Write-Error 'El rebase fallo. Resolve los conflictos con git status y luego git rebase --continue'
         }
@@ -57,8 +57,8 @@ try {
             git add -A
             git commit -m $msg
 
-            Write-Output '==> git pull --rebase origin main (antes del push)'
-            git pull --rebase origin main
+            Write-Output '==> git pull --rebase --autostash origin main (antes del push)'
+            git pull --rebase --autostash origin main
             if ($LASTEXITCODE -ne 0) {
                 Write-Error 'El rebase fallo. Resolve los conflictos con git status y luego git rebase --continue'
             }
