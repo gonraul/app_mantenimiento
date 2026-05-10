@@ -65,19 +65,6 @@ class _TasksPageState extends State<TasksPage> {
     return Icons.build_rounded;
   }
 
-  Color _getPriorityColor(String priority) => const Color(0xFF4CAF50);
-
-  String _getPriorityLabel(String priority) {
-    switch (priority) {
-      case 'alta':
-        return 'Alta';
-      case 'media':
-        return 'Media';
-      default:
-        return 'Normal';
-    }
-  }
-
   void _goToDetail(BuildContext context, Equipment equipment) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -109,14 +96,14 @@ class _TasksPageState extends State<TasksPage> {
 
   // ── Tarjeta estilo edenordigital ─────────────────────────────────────────
   Widget _buildCard(BuildContext context, Equipment equipment) {
-    final priorityColor = _getPriorityColor(equipment.priority);
+    const ribeteColor = Color(0xFF4CAF50);
     return GestureDetector(
       onTap: () => _goToDetail(context, equipment),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border(left: BorderSide(color: priorityColor, width: 4)),
+          border: Border(left: BorderSide(color: ribeteColor, width: 4)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.06),
@@ -175,34 +162,14 @@ class _TasksPageState extends State<TasksPage> {
                   height: 1.35,
                 ),
               ),
-              // Badge prioridad + flecha
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: priorityColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _getPriorityLabel(equipment.priority),
-                      style: TextStyle(
-                        color: priorityColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.arrow_forward_ios,
-                    size: 12,
-                    color: Colors.grey[400],
-                  ),
-                ],
+              // Flecha
+              Align(
+                alignment: Alignment.centerRight,
+                child: Icon(
+                  Icons.arrow_forward_ios,
+                  size: 12,
+                  color: Colors.grey[400],
+                ),
               ),
             ],
           ),
