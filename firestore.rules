@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidEquipoData() {
+      return request.resource.data.keys().hasOnly([
+        'nombre',
+        'tipo',
+        'ubicacion',
+        'title',
+        'description',
+        'status',
+        'priority',
+        'location',
+        'piso',
+        'area',
+        'areaTecnica',
+        'tags',
+        'source',
+        'telefono',
+        'incidente_id',
+        'createdAt',
+        'updatedAt',
+        'timestamp',
+        'archivos',
+        'documents'
+      ])
+      && request.resource.data.nombre is string
+      && request.resource.data.tipo is string
+      && request.resource.data.ubicacion is string;
+    }
+
+    function isValidEventoData() {
+      return request.resource.data.keys().hasOnly([
+        'texto',
+        'tipo',
+        'tecnico',
+        'canal',
+        'timestamp',
+        'ia'
+      ])
+      && request.resource.data.texto is string
+      && request.resource.data.tipo in ['reporte', 'consulta', 'mantenimiento']
+      && request.resource.data.tecnico is string
+      && request.resource.data.canal in ['teams', 'app', 'google_chat']
+      && request.resource.data.timestamp is timestamp;
+    }
+
+    function isValidArchivoData() {
+      return request.resource.data.keys().hasOnly(['tipo', 'url', 'nombre'])
+      && request.resource.data.tipo in ['foto', 'video', 'manual']
+      && request.resource.data.url is string
+      && request.resource.data.nombre is string;
+    }
+
+    match /equipos/{equipoId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidEquipoData();
+      allow delete: if false;
+
+      match /eventos/{eventoId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidEventoData();
+        allow delete: if false;
+
+        match /archivos/{archivoId} {
+          allow read: if isSignedIn();
+          allow create, update: if isSignedIn() && isValidArchivoData();
+          allow delete: if false;
+        }
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

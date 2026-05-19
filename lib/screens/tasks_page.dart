@@ -1,5 +1,6 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/equipment.dart';
 import '../services/equipment_repository.dart';
@@ -8,7 +9,6 @@ import '../use_cases/get_equipments_stream_use_case.dart';
 import '../use_cases/search_equipments_use_case.dart';
 import '../view_models/tasks_view_model.dart';
 import 'detalle_equipo_page.dart';
-import 'upload_content_screen.dart';
 
 class TasksPage extends StatefulWidget {
   const TasksPage({super.key});
@@ -17,52 +17,31 @@ class TasksPage extends StatefulWidget {
   State<TasksPage> createState() => _TasksPageState();
 }
 
-class _TasksPageState extends State<TasksPage> {
-  static const double _desktopBreakpoint = 700;
+class _TasksPageState extends State<TasksPage>
+  {
+  static const double _minPanelHeight = 100;
+  static const double _openFraction = 0.85;
 
-  final TextEditingController _searchController = TextEditingController();
   late final TasksViewModel _viewModel;
-  bool _isGridView = true;
+  final EquipmentRepository _repository = EquipmentRepository();
+
+  double _panelHeight = _minPanelHeight;
 
   @override
   void initState() {
     super.initState();
-    final repository = EquipmentRepository();
     _viewModel = TasksViewModel(
-      getEquipmentsStream: GetEquipmentsStreamUseCase(repository),
+      getEquipmentsStream: GetEquipmentsStreamUseCase(_repository),
       searchEquipments: const SearchEquipmentsUseCase(),
     );
     _viewModel.start();
+
   }
 
   @override
   void dispose() {
-    _searchController.dispose();
     _viewModel.dispose();
     super.dispose();
-  }
-
-  IconData _getTaskIcon(Equipment equipment) {
-    final text =
-        '${equipment.title} ${equipment.description} ${equipment.tags.join(' ')}'
-            .toLowerCase();
-    if (text.contains('electric') ||
-        text.contains('tablero') ||
-        text.contains('energia') ||
-        text.contains('enchufe') ||
-        text.contains('chiller')) return Icons.bolt_rounded;
-    if (text.contains('agua') ||
-        text.contains('plomer') ||
-        text.contains('cano') ||
-        text.contains('grifo')) return Icons.plumbing_rounded;
-    if (text.contains('mecan') ||
-        text.contains('motor') ||
-        text.contains('bomba') ||
-        text.contains('engran')) return Icons.settings_rounded;
-    if (text.contains('incendio') ||
-        text.contains('alarma') ||
-        text.contains('seguridad')) return Icons.local_fire_department_rounded;
-    return Icons.build_rounded;
   }
 
   void _goToDetail(BuildContext context, Equipment equipment) {
@@ -73,152 +52,64 @@ class _TasksPageState extends State<TasksPage> {
     );
   }
 
-  Future<void> _goToUpload(BuildContext context) async {
-    await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => const UploadContentScreen()),
-    );
+  void _onPanelDragUpdate(DragUpdateDetails details, double maxPanelHeight) {
+    setState(() {
+        _panelHeight = (_panelHeight - details.delta.dy)
+          .clamp(100.0, maxPanelHeight)
+          .toDouble();
+    });
   }
 
-  String _initials(User? user) {
-    if (user == null) return '?';
-    final name = user.displayName;
-    if (name != null && name.trim().isNotEmpty) {
-      final parts = name.trim().split(RegExp(r'\s+'));
-      return parts.map((p) => p[0]).take(3).join().toUpperCase();
+  void _onPanelDragEnd(DragEndDetails details, double maxPanelHeight) {
+    if (details.velocity.pixelsPerSecond.dy < -300) {
+      setState(() => _panelHeight = maxPanelHeight);
+    } else if (details.velocity.pixelsPerSecond.dy > 300) {
+      setState(() => _panelHeight = 100.0);
     }
-    final email = user.email;
-    if (email != null && email.isNotEmpty) {
-      return email[0].toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final maxPanelHeight = screenHeight * _openFraction;
+
+    if (_panelHeight > maxPanelHeight) {
+      _panelHeight = maxPanelHeight;
     }
-    return '?';
-  }
 
-  // ── Tarjeta estilo edenordigital ─────────────────────────────────────────
-  Widget _buildCard(BuildContext context, Equipment equipment) {
-    const ribeteColor = Color(0xFF4CAF50);
-    return GestureDetector(
-      onTap: () => _goToDetail(context, equipment),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border(left: BorderSide(color: ribeteColor, width: 4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        clipBehavior: Clip.hardEdge,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Ícono + título
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8EAF6),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      _getTaskIcon(equipment),
-                      color: AppColors.azulAustral,
-                      size: 18,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      equipment.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.azulAustral,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              // Descripción
-              Text(
-                equipment.description,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-              ),
-              // Flecha
-              Align(
-                alignment: Alignment.centerRight,
-                child: Icon(
-                  Icons.arrow_forward_ios,
-                  size: 12,
-                  color: Colors.grey[400],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    final progress = ((_panelHeight - _minPanelHeight) /
+            (maxPanelHeight - _minPanelHeight))
+        .clamp(0.0, 1.0);
 
-  // ── Header compacto para mobile ──────────────────────────────────────────
-  Widget _buildMobileHeader(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    final initials = _initials(user);
-
-    return Container(
-      decoration: const BoxDecoration(gradient: AppColors.australGradient),
-      padding: const EdgeInsets.fromLTRB(16, 48, 16, 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Scaffold(
+      body: Stack(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Image.asset(
-                  'assets/images/logo_white-removebg-preview.png',
-                  height: 32,
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF1A3A6E), Color(0xFF0E7060)],
                 ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Mantenimiento Hospital Austral',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-          Transform.translate(
-            offset: const Offset(0, -24),
-            child: CircleAvatar(
-              backgroundColor: Colors.white24,
-              child: Text(
-                initials,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
+          _TopHeader(progress: progress, screenHeight: screenHeight),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _SlidingPanel(
+              height: _panelHeight,
+              minHeight: _minPanelHeight,
+              onDragUpdate: (details) =>
+                  _onPanelDragUpdate(details, maxPanelHeight),
+              onDragEnd: (details) => _onPanelDragEnd(details, maxPanelHeight),
+              content: _EquipmentsGrid(
+                viewModel: _viewModel,
+                repository: _repository,
+                onTapEquipment: (equipment) => _goToDetail(context, equipment),
               ),
             ),
           ),
@@ -226,192 +117,366 @@ class _TasksPageState extends State<TasksPage> {
       ),
     );
   }
+}
+
+class _TopHeader extends StatelessWidget {
+  const _TopHeader({required this.progress, required this.screenHeight});
+
+  final double progress;
+  final double screenHeight;
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.of(context).size.width > _desktopBreakpoint;
+    final topPadding = MediaQuery.of(context).padding.top;
+    final logoScale = lerpDouble(1.0, 0.8, progress)!;
+
+    return SizedBox.expand(
+      child: Stack(
+        children: [
+          Positioned(
+            left: 20,
+            right: 20,
+            top: topPadding + 8,
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () {},
+                  icon: const Icon(
+                    Icons.menu_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                  tooltip: 'Menu',
+                ),
+                const Spacer(),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: const BoxDecoration(
+                    color: AppColors.verdeAustral,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.person,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: screenHeight * 0.22,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Transform.scale(
+                  scale: logoScale,
+                  child: Image.asset(
+                    'assets/images/logo_white-removebg-preview.png',
+                    height: 98.6,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Opacity(
+                  opacity: lerpDouble(1.0, 0.72, progress)!,
+                  child: const Text(
+                    'MANTENIMIENTO',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30.6,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SlidingPanel extends StatelessWidget {
+  const _SlidingPanel({
+    required this.height,
+    required this.minHeight,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+    required this.content,
+  });
+
+  final double height;
+  final double minHeight;
+  final ValueChanged<DragUpdateDetails> onDragUpdate;
+  final ValueChanged<DragEndDetails> onDragEnd;
+  final Widget content;
+
+  @override
+  Widget build(BuildContext context) {
+    final expanded = height > (minHeight + 24);
 
     return Material(
-      color: const Color(0xFFF0F2F5),
-      child: SafeArea(
-        top: false,
+      color: Colors.transparent,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        height: height,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x26000000),
+              blurRadius: 18,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragUpdate: onDragUpdate,
+              onVerticalDragEnd: onDragEnd,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD7DCE1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const _SheetTitleRow(),
+                  ],
+                ),
+              ),
+            ),
+            if (expanded)
+              Expanded(
+                child: content,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-            // ── Barra de título + acciones ───────────────────────────
+class _SheetTitleRow extends StatelessWidget {
+  const _SheetTitleRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(width: 6),
+        const Text(
+          'Equipos',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF102D55),
+          ),
+        ),
+        const Spacer(),
+        IconButton(
+          onPressed: () {},
+          icon: const Icon(
+            Icons.notifications_none_rounded,
+            color: Color(0xFF102D55),
+            size: 28,
+          ),
+          tooltip: 'Notificaciones',
+        ),
+      ],
+    );
+  }
+}
+
+class _EquipmentsGrid extends StatelessWidget {
+  const _EquipmentsGrid({
+    required this.viewModel,
+    required this.repository,
+    required this.onTapEquipment,
+  });
+
+  final TasksViewModel viewModel;
+  final EquipmentRepository repository;
+  final ValueChanged<Equipment> onTapEquipment;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: viewModel,
+      builder: (context, _) {
+        if (viewModel.errorMessage != null) {
+          return Center(child: Text('Error: ${viewModel.errorMessage}'));
+        }
+
+        if (viewModel.isLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final equipments = viewModel.equipments;
+        if (equipments.isEmpty) {
+          return const Center(
+            child: Text(
+              'No se encontraron equipos',
+              style: TextStyle(
+                color: Color(0xFF63758C),
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          );
+        }
+
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 110),
+          itemCount: equipments.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            mainAxisExtent: 132,
+          ),
+          itemBuilder: (context, index) {
+            final equipment = equipments[index];
+            return _EquipmentCard(
+              equipment: equipment,
+              latestEventTextStream:
+                  repository.watchLatestEventTextByEquipment(equipment.id),
+              onTap: () => onTapEquipment(equipment),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _EquipmentCard extends StatelessWidget {
+  const _EquipmentCard({
+    required this.equipment,
+    required this.latestEventTextStream,
+    required this.onTap,
+  });
+
+  final Equipment equipment;
+  final Stream<String> latestEventTextStream;
+  final VoidCallback onTap;
+
+  String _fallbackDescription() {
+    final description = equipment.description.trim();
+    return description;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              top: 0,
+              left: 0,
+              child: ClipPath(
+                clipper: _TriangleClipper(),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF1A3A6E), Color(0xFF0E7060)],
+                    ),
+                  ),
+                ),
+              ),
+            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-              child: Row(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Equipos',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A2E),
+                  Text(
+                    equipment.title.trim().isEmpty
+                        ? 'Equipo sin nombre'
+                        : equipment.title.trim(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF1A3A6E),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
                     ),
                   ),
-                  const Spacer(),
-                  // Botón agregar
-                  ElevatedButton.icon(
-                    onPressed: () => _goToUpload(context),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Agregar'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.azulAustral,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      elevation: 0,
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: StreamBuilder<String>(
+                      stream: latestEventTextStream,
+                      builder: (context, snapshot) {
+                        final latestText = (snapshot.data ?? '').trim();
+                        final subtitle =
+                            latestText.isEmpty ? _fallbackDescription() : latestText;
+
+                        if (subtitle.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+
+                        return RichText(
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          text: TextSpan(
+                            children: [
+                              const TextSpan(
+                                text: '• ',
+                                style: TextStyle(
+                                  color: AppColors.verdeAustral,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              TextSpan(
+                                text: subtitle,
+                                style: const TextStyle(
+                                  color: Color(0xFF434C5A),
+                                  fontSize: 11,
+                                  height: 1.3,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // Toggle lista / grilla (solo desktop)
-                  if (isDesktop) ...[
-                    _ViewToggleButton(
-                      icon: Icons.view_list_rounded,
-                      active: !_isGridView,
-                      onTap: () => setState(() => _isGridView = false),
-                    ),
-                    const SizedBox(width: 4),
-                    _ViewToggleButton(
-                      icon: Icons.grid_view_rounded,
-                      active: _isGridView,
-                      onTap: () => setState(() => _isGridView = true),
-                    ),
-                  ],
                 ],
-              ),
-            ),
-
-            const SizedBox(height: 14),
-
-            // ── Barra de búsqueda ─────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white,
-                    prefixIcon: const Icon(
-                      Icons.search,
-                      color: Colors.grey,
-                      size: 20,
-                    ),
-                    hintText: 'Buscá por equipo, descripción o etiqueta...',
-                    hintStyle: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 14,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: AppColors.azulAustral.withValues(alpha: 0.4),
-                        width: 1.5,
-                      ),
-                    ),
-                  ),
-                  onChanged: _viewModel.setSearchTerm,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // ── Contenido ────────────────────────────────────────────
-            Expanded(
-              child: AnimatedBuilder(
-                animation: _viewModel,
-                builder: (context, _) {
-                  if (_viewModel.errorMessage != null) {
-                    return Center(
-                      child: Text('Error: ${_viewModel.errorMessage}'),
-                    );
-                  }
-                  if (_viewModel.isLoading) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final equipments = _viewModel.equipments;
-                  if (equipments.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.inventory_2_outlined,
-                            size: 64,
-                            color: Colors.grey[300],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'No se encontraron equipos',
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  final useGrid = isDesktop && _isGridView;
-
-                  if (useGrid) {
-                    return GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 14,
-                        mainAxisExtent: 160,
-                      ),
-                      itemCount: equipments.length,
-                      itemBuilder: (context, index) =>
-                          _buildCard(context, equipments[index]),
-                    );
-                  }
-
-                  return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                    itemCount: equipments.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) =>
-                        _buildCard(context, equipments[index]),
-                  );
-                },
               ),
             ),
           ],
@@ -421,40 +486,16 @@ class _TasksPageState extends State<TasksPage> {
   }
 }
 
-// ── Toggle botón lista/grilla ─────────────────────────────────────────────────
-class _ViewToggleButton extends StatelessWidget {
-  const _ViewToggleButton({
-    required this.icon,
-    required this.active,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final bool active;
-  final VoidCallback onTap;
+class _TriangleClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(0, size.height)
+      ..close();
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: active ? AppColors.azulAustral : Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: active
-                ? AppColors.azulAustral
-                : Colors.grey.withValues(alpha: 0.3),
-          ),
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: active ? Colors.white : Colors.grey[500],
-        ),
-      ),
-    );
-  }
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }

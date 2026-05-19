@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'busqueda_screen.dart';
 import 'tasks_page.dart';
+import 'upload_content_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,18 +21,24 @@ class _HomePageState extends State<HomePage> {
   static final List<Widget> _screens = <Widget>[
     const TasksPage(),
     const BusquedaScreen(),
+    const UploadContentScreen(),
   ];
 
   static const _navItems = [
     (
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home_rounded,
-      label: 'Inicio',
+      icon: Icons.chat_bubble_outline_rounded,
+      selectedIcon: Icons.chat_bubble_rounded,
+      label: 'Chat',
     ),
     (
       icon: Icons.search_outlined,
       selectedIcon: Icons.search_rounded,
-      label: 'Búsqueda',
+      label: 'Buscar',
+    ),
+    (
+      icon: Icons.add_circle_outline_rounded,
+      selectedIcon: Icons.add_circle_rounded,
+      label: 'Agregar Info',
     ),
   ];
 
@@ -145,64 +152,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMobile(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    final name = user?.displayName;
-    String initials = '?';
-    if (name != null && name.trim().isNotEmpty) {
-      final parts = name.trim().split(RegExp(r'\s+'));
-      initials = parts.map((p) => p[0]).take(2).join().toUpperCase();
-    } else if (user?.email != null) {
-      initials = user!.email![0].toUpperCase();
-    }
-
     return Scaffold(
-      appBar: AppBar(
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(gradient: AppColors.australGradient),
-        ),
-        backgroundColor: AppColors.azulAustral,
-        elevation: 0,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        title: Image.asset(
-          'assets/images/logo_white-removebg-preview.png',
-          height: 28,
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: Colors.white24,
-              child: Text(
-                initials,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-        ],
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(34),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: Text(
-                'Mantenimiento Hospital Austral',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,

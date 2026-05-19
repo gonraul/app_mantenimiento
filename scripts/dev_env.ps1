@@ -16,40 +16,55 @@ function Add-ToPathIfMissing {
     }
 }
 
-function Get-Node22Home {
+function Get-NodeHome {
     $pkgRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
-    if (-not (Test-Path $pkgRoot)) {
-        return $null
+    if (Test-Path $pkgRoot) {
+        $nodePkg = Get-ChildItem -Path $pkgRoot -Directory -Filter 'OpenJS.NodeJS.22*' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+        if ($nodePkg) {
+            $node22 = Get-ChildItem -Path $nodePkg.FullName -Directory -Filter 'node-v*-win-x64' -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+
+            if ($node22 -and (Test-Path (Join-Path $node22 'node.exe'))) {
+                return $node22
+            }
+        }
     }
 
-    $nodePkg = Get-ChildItem -Path $pkgRoot -Directory -Filter 'OpenJS.NodeJS.22*' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    if (-not $nodePkg) {
-        return $null
+    # Fallback: usar Node del PATH cuando no haya Node 22 portable.
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeCmd) {
+        return Split-Path -Parent $nodeCmd.Source
     }
 
-    return Get-ChildItem -Path $nodePkg.FullName -Directory -Filter 'node-v*-win-x64' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
+    return $null
 }
 
 function Get-JavaHome {
-    $base = Join-Path $env:USERPROFILE 'tools\jdk17'
-    if (-not (Test-Path $base)) {
-        return $null
+    $candidates = @(
+        $env:JAVA_HOME,
+        (Join-Path $env:USERPROFILE 'tools\jdk17'),
+        'C:\Program Files\Android\Android Studio\jbr'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path (Join-Path $candidate 'bin\java.exe')) {
+            return $candidate
+        }
+
+        $latestJdk = Get-ChildItem -Path $candidate -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+        if ($latestJdk -and (Test-Path (Join-Path $latestJdk.FullName 'bin\java.exe'))) {
+            return $latestJdk.FullName
+        }
     }
 
-    $dir = Get-ChildItem -Path $base -Directory -Filter 'jdk-*' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    if (-not $dir) {
-        return $null
-    }
-
-    return $dir.FullName
+    return $null
 }
 
 function Get-AndroidSdkHome {
@@ -67,9 +82,25 @@ function Get-AndroidSdkHome {
     return $null
 }
 
-$flutterHome = Join-Path $env:USERPROFILE 'tools\flutter\flutter'
-if (-not (Test-Path (Join-Path $flutterHome 'bin\flutter.bat'))) {
-    throw "Flutter no encontrado en $flutterHome"
+function Get-FlutterHome {
+    $candidates = @(
+        $env:FLUTTER_HOME,
+        (Join-Path $env:USERPROFILE 'tools\flutter\flutter'),
+        'C:\scr\flutter'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path (Join-Path $candidate 'bin\flutter.bat')) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+$flutterHome = Get-FlutterHome
+if (-not $flutterHome) {
+    throw 'Flutter no encontrado. Define FLUTTER_HOME o instala en %USERPROFILE%\\tools\\flutter\\flutter o C:\\scr\\flutter'
 }
 
 $javaHome = Get-JavaHome
@@ -77,9 +108,9 @@ if (-not $javaHome -or -not (Test-Path (Join-Path $javaHome 'bin\java.exe'))) {
     throw 'Java 17 portable no encontrado en %USERPROFILE%\\tools\\jdk17'
 }
 
-$nodeHome = Get-Node22Home
+$nodeHome = Get-NodeHome
 if (-not $nodeHome -or -not (Test-Path (Join-Path $nodeHome 'node.exe'))) {
-    throw 'Node 22 no encontrado. Instala con winget en scope user.'
+    throw 'Node no encontrado. Instala Node en scope user o agrega node.exe al PATH.'
 }
 
 $env:FLUTTER_HOME = $flutterHome

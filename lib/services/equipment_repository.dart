@@ -410,6 +410,29 @@ class EquipmentRepository {
     });
   }
 
+  Stream<String> watchLatestEventTextByEquipment(String equipmentId) {
+    final eventosRef = _firestore
+        .collection(_topicsCollection)
+        .doc(equipmentId)
+        .collection('eventos');
+
+    return eventosRef
+        .orderBy('timestamp', descending: true)
+        .limit(20)
+        .snapshots()
+        .map((snapshot) {
+      for (final eventDoc in snapshot.docs) {
+        final data = eventDoc.data();
+        final text = ((data['texto'] as String?) ?? (data['text'] as String?) ?? '')
+            .trim();
+        if (text.isEmpty) continue;
+        if (_isLegacyGeminiReplyText(text)) continue;
+        return text;
+      }
+      return '';
+    });
+  }
+
   Future<void> createTopicWithMedia({
     required Uint8List bytes,
     required String originalFileName,
