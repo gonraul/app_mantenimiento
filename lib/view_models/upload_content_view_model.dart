@@ -34,6 +34,7 @@ class UploadContentViewModel extends ChangeNotifier {
     required String area,
     required String areaTecnica,
     required List<String> tags,
+    String caption = '',
   }) async {
     if (_isUploading) return;
 
@@ -48,7 +49,7 @@ class UploadContentViewModel extends ChangeNotifier {
       await _uploadUseCase.call(
         bytes: bytes,
         originalFileName: file.name,
-        caption: '',
+        caption: caption,
         order: 0,
         equipmentId: isNewTopic ? null : selectedTopicId,
         title: title,

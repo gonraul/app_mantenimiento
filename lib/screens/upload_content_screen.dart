@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -26,6 +29,8 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   final TextEditingController _areaController = TextEditingController();
   final TextEditingController _areaTecnicaController = TextEditingController();
   final TextEditingController _tagsController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
+
 
   PlatformFile? _selectedFile;
   late String _selectedTopicId;
@@ -52,6 +57,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     _areaController.dispose();
     _areaTecnicaController.dispose();
     _tagsController.dispose();
+    _noteController.dispose();
     _viewModel.dispose();
     super.dispose();
   }
@@ -95,7 +101,8 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowMultiple: false,
-      withData: true,
+      withData: false,
+      withReadStream: true,
       allowedExtensions: const [
         'jpg',
         'jpeg',
@@ -106,6 +113,10 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
         'avi',
         'mkv',
         'webm',
+        'pdf',
+        'txt',
+        'doc',
+        'docx',
       ],
     );
 
@@ -121,9 +132,12 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     if (_viewModel.isUploading) return;
 
     final file = _selectedFile;
-    if (file == null || file.bytes == null) {
+    final noteText = _noteController.text.trim();
+    if (file == null && noteText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecciona un archivo primero')),
+        const SnackBar(
+          content: Text('Selecciona un archivo o escribi una nota'),
+        ),
       );
       return;
     }
@@ -145,8 +159,12 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                 .where((t) => t.isNotEmpty)
                 .toList();
 
+        final uploadFile = file == null
+          ? _buildNotePlatformFile(noteText)
+          : await _ensureFileBytes(file);
+
       await _viewModel.upload(
-        file: file,
+        file: uploadFile,
         isNewTopic: _isNewTopic,
         selectedTopicId: _selectedTopicId,
         title: _titleController.text.trim(),
@@ -155,6 +173,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
         area: _areaController.text.trim(),
         areaTecnica: _areaTecnicaController.text.trim(),
         tags: tags,
+        caption: noteText,
       );
 
       if (!mounted) return;
@@ -169,6 +188,37 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+
+  PlatformFile _buildNotePlatformFile(String noteText) {
+    final bytes = Uint8List.fromList(utf8.encode(noteText));
+    final now = DateTime.now();
+    final name =
+        'nota_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}.txt';
+    return PlatformFile(name: name, size: bytes.length, bytes: bytes);
+  }
+
+  Future<PlatformFile> _ensureFileBytes(PlatformFile file) async {
+    if (file.bytes != null) return file;
+
+    final stream = file.readStream;
+    if (stream == null) {
+      throw Exception('No se pudo leer el archivo seleccionado');
+    }
+
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in stream) {
+      builder.add(chunk);
+    }
+
+    final bytes = builder.takeBytes();
+    return PlatformFile(
+      name: file.name,
+      size: bytes.length,
+      bytes: bytes,
+      path: file.path,
+      identifier: file.identifier,
+    );
   }
 
   @override
@@ -295,7 +345,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                       icon: const Icon(Icons.attach_file_rounded),
                       label: Text(
                         _selectedFile == null
-                            ? 'Seleccionar imagen / video'
+                            ? 'Seleccionar imagen / video / pdf'
                             : _selectedFile!.name,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -306,6 +356,16 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
                           borderRadius: BorderRadius.circular(15),
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _noteController,
+                      maxLines: 3,
+                      decoration: _inputDecoration(
+                        label: 'Nota (opcional)',
+                        hint: 'Si no adjuntas archivo, se sube como nota .txt',
                       ),
                     ),
 

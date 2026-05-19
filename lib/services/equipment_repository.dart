@@ -28,6 +28,16 @@ class EquipmentRepository {
     'webm',
   ];
 
+  static const List<String> _imageExtensions = <String>[
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'gif',
+    'bmp',
+    'heic',
+  ];
+
   static String _normalizeLegacyText(String value) {
     return value
         .toLowerCase()
@@ -332,10 +342,52 @@ class EquipmentRepository {
 
   String _detectMediaType(String fileName) {
     final extension = fileName.split('.').last.toLowerCase();
+    if (_imageExtensions.contains(extension)) {
+      return 'image';
+    }
     if (_videoExtensions.contains(extension)) {
       return 'video';
     }
-    return 'image';
+    return 'file';
+  }
+
+  String _detectContentType(String fileName, String mediaType) {
+    final extension = fileName.split('.').last.toLowerCase();
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'gif':
+        return 'image/gif';
+      case 'bmp':
+        return 'image/bmp';
+      case 'heic':
+        return 'image/heic';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'mkv':
+        return 'video/x-matroska';
+      case 'webm':
+        return 'video/webm';
+      case 'pdf':
+        return 'application/pdf';
+      case 'txt':
+        return 'text/plain';
+      case 'doc':
+        return 'application/msword';
+      case 'docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      default:
+        return mediaType == 'video' ? 'video/mp4' : 'application/octet-stream';
+    }
   }
 
   String _buildStoragePath(String pdfId, String safeFileName) {
@@ -583,7 +635,7 @@ class EquipmentRepository {
     await ref.putData(
       bytes,
       SettableMetadata(
-        contentType: mediaType == 'video' ? 'video/mp4' : 'image/jpeg',
+        contentType: _detectContentType(originalFileName, mediaType),
       ),
     );
 

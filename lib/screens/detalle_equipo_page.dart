@@ -1,17 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
-import '../core/app_error_mapper.dart';
-import '../models/comment_model.dart';
 import '../models/equipment.dart';
-import '../models/equipment_event_media.dart';
 import '../models/media_item.dart';
 import '../services/equipment_repository.dart';
 import '../theme/app_theme.dart';
-import '../use_cases/delete_media_from_equipment_use_case.dart';
 import '../use_cases/get_equipment_detail_stream_use_case.dart';
 import 'upload_content_screen.dart';
 import 'visor_imagen_screen.dart';
@@ -20,47 +13,18 @@ import 'visor_video_screen.dart';
 class DetalleEquipoPage extends StatelessWidget {
   const DetalleEquipoPage({super.key, required this.equipmentId});
 
-  static const double _desktopLayoutBreakpoint = 900;
-  static const double _maxDesktopWidth = 1100;
-
   final String equipmentId;
 
   static final EquipmentRepository _repository = EquipmentRepository();
   static final GetEquipmentDetailStreamUseCase _detailUseCase =
       GetEquipmentDetailStreamUseCase(_repository);
-  static final DeleteMediaFromEquipmentUseCase _deleteMediaUseCase =
-      DeleteMediaFromEquipmentUseCase(_repository);
 
-  static String _normalizeLegacyText(String value) {
-    return value
-        .toLowerCase()
-        .replaceAll('á', 'a')
-        .replaceAll('é', 'e')
-        .replaceAll('í', 'i')
-        .replaceAll('ó', 'o')
-        .replaceAll('ú', 'u')
-        .trim();
-  }
-
-  static bool _isLegacyGeminiReplyText(String value) {
-    final normalized = _normalizeLegacyText(value);
-    if (normalized.isEmpty) return false;
-
-    return normalized.contains('hipotesis') ||
-        normalized.startsWith('¡dale,') ||
-        normalized.startsWith('dale,') ||
-      normalized.startsWith('aca estoy');
-  }
-
-  static bool _shouldIncludeMediaItem(MediaItem media) {
-    if (media.source.isEmpty) return false;
-
-    final caption = media.caption.trim();
-    final name = media.name.trim();
-    if (_isLegacyGeminiReplyText(caption)) return false;
-    if (_isLegacyGeminiReplyText(name)) return false;
-    return true;
-  }
+  static const List<_CategoryTileData> _categories = [
+    _CategoryTileData(label: 'Manuales', icon: Icons.picture_as_pdf_rounded),
+    _CategoryTileData(label: 'Videos', icon: Icons.videocam_rounded),
+    _CategoryTileData(label: 'Fotos', icon: Icons.image_rounded),
+    _CategoryTileData(label: 'Notas', icon: Icons.sticky_note_2_rounded),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -68,25 +32,13 @@ class DetalleEquipoPage extends StatelessWidget {
       stream: _detailUseCase.call(equipmentId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Container(
-              decoration: const BoxDecoration(
-                gradient: AppColors.australGradient,
-              ),
-              child: Center(
-                child: Text(
-                  'Error al cargar equipo: ${snapshot.error}',
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
-            ),
+          return const Scaffold(
+            body: Center(child: Text('Error al cargar equipo.')),
           );
         }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            backgroundColor: Colors.transparent,
             body: Center(child: CircularProgressIndicator()),
           );
         }
@@ -94,137 +46,351 @@ class DetalleEquipoPage extends StatelessWidget {
         final equipment = snapshot.data;
         if (equipment == null) {
           return const Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Center(child: Text('No se encontró el equipo seleccionado')),
+            body: Center(child: Text('No se encontro el equipo seleccionado')),
           );
         }
 
         final equipoNombre = equipment.title.trim().isEmpty
-            ? 'Detalle de equipo'
-            : equipment.title.trim();
-        final rawDescription = equipment.description.trim();
-        final description = _isLegacyGeminiReplyText(rawDescription)
-          ? ''
-          : rawDescription;
-        final useDesktopLayout =
-          MediaQuery.of(context).size.width > _desktopLayoutBreakpoint;
+            ? 'equipo'
+            : equipment.title.trim().toLowerCase();
 
-        final historial = equipment.media
-            .where(_shouldIncludeMediaItem)
-            .map(
-              (media) => _HistorialItem(
-                source: media.source,
-                kind: _kindFromMediaType(media.type),
-                uploadedAt: media.createdAt,
-                mediaDocId: media.id,
-                name: media.name,
-                caption: media.caption,
-              ),
-            )
-            .toList();
-
-        final user = FirebaseAuth.instance.currentUser;
-        final initials = _userInitials(user);
+        final files = equipment.media
+            .where((media) => media.source.trim().isNotEmpty)
+            .map(_ArchivoListItem.fromMedia)
+            .toList()
+          ..sort((a, b) {
+            final aDate = a.createdAt;
+            final bDate = b.createdAt;
+            if (aDate == null && bDate == null) return 0;
+            if (aDate == null) return 1;
+            if (bDate == null) return -1;
+            return bDate.compareTo(aDate);
+          });
 
         return Scaffold(
-          extendBodyBehindAppBar: false,
-          backgroundColor: const Color(0xFFF0F2F5),
+          extendBodyBehindAppBar: true,
+          backgroundColor: Colors.transparent,
           appBar: AppBar(
-            flexibleSpace: Container(
-              decoration: const BoxDecoration(gradient: AppColors.australGradient),
-            ),
-            backgroundColor: AppColors.azulAustral,
+            backgroundColor: Colors.transparent,
             elevation: 0,
-            foregroundColor: Colors.white,
             centerTitle: true,
-            title: Image.asset(
-              'assets/images/logo_white-removebg-preview.png',
-              height: 28,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.of(context).pop(),
             ),
-            actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Colors.white24,
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+            title: Text(equipoNombre),
+          ),
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: Container(
+                  decoration: const BoxDecoration(gradient: AppColors.australGradient),
+                ),
+              ),
+              Positioned.fill(
+                top: kToolbarHeight + MediaQuery.of(context).padding.top + 8,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFE7EDF4),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(30),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        GridView.count(
+                          padding: EdgeInsets.zero,
+                          crossAxisCount: 2,
+                          childAspectRatio: 1.5,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          children: _categories
+                              .map((item) => _CategoryTile(item: item))
+                              .toList(),
+                        ),
+                        const SizedBox(height: 18),
+                        const Text(
+                          'Archivos cargados',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF395878),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: files.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    'Todavia no hay archivos cargados.',
+                                    style: TextStyle(color: Colors.black54),
+                                  ),
+                                )
+                              : ListView.separated(
+                                  padding: EdgeInsets.zero,
+                                  itemCount: files.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                                  itemBuilder: (context, index) {
+                                    final item = files[index];
+                                    return _ArchivoTile(
+                                      item: item,
+                                      onTap: () => _openFile(context, item, equipoNombre),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
             ],
-            bottom: const PreferredSize(
-              preferredSize: Size.fromHeight(34),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
-                  child: Text(
-                    'Mantenimiento Hospital Austral',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
-              ),
-            ),
           ),
-          floatingActionButton: FloatingActionButton(
-            backgroundColor: AppColors.verdeAustral,
-            foregroundColor: Colors.white,
-            onPressed: () async {
-              await Navigator.push<bool>(
-                context,
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: 1,
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline_rounded),
+                selectedIcon: Icon(Icons.chat_bubble_rounded),
+                label: 'Chat',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.search_outlined),
+                selectedIcon: Icon(Icons.search_rounded),
+                label: 'Buscar',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.add_circle_outline_rounded),
+                selectedIcon: Icon(Icons.add_circle_rounded),
+                label: 'Agregar Info',
+              ),
+            ],
+            onDestinationSelected: (index) {
+              if (index == 1) return;
+              if (index == 0) {
+                Navigator.of(context).pop();
+                return;
+              }
+              Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) =>
-                      UploadContentScreen(initialTopicId: equipment.id),
+                  builder: (_) => UploadContentScreen(initialTopicId: equipment.id),
                 ),
               );
             },
-            child: const Icon(Icons.add_a_photo),
           ),
-          body: Center(
-            child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: _maxDesktopWidth),
-                child: Padding(
-                  padding: useDesktopLayout
-                      ? const EdgeInsets.fromLTRB(16, 16, 16, 12)
-                      : const EdgeInsets.only(bottom: 12),
-                  child: _DetailContent(
-                    description: description,
-                    historial: historial,
-                    eventMediaStream: _repository.watchEventPhotosByEquipment(
-                      equipment.id,
-                    ),
-                    equipoNombre: equipoNombre,
-                    formatDate: _formatDate,
-                    resolveMediaUrlForOpen: _resolveMediaUrlForOpen,
-                    confirmAndDeleteFile: ({
-                      required BuildContext context,
-                      required String mediaSource,
-                      required String equipmentId,
-                    }) {
-                      return _confirmAndDeleteFile(
-                        context: context,
-                        mediaSource: mediaSource,
-                        equipmentId: equipmentId,
-                      );
-                    },
-                    equipmentId: equipment.id,
-                    useDesktopLayout: useDesktopLayout,
-                  ),
-                ),
-              ),
-            ),
         );
       },
+    );
+  }
+
+  Future<void> _openFile(
+    BuildContext context,
+    _ArchivoListItem item,
+    String equipoNombre,
+  ) async {
+    final openUrl = await _resolveMediaUrl(item.source);
+    if (!context.mounted) return;
+
+    if (item.kind == _ArchivoKind.image) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VisorImagenScreen(
+            imageUrl: openUrl,
+            titulo: equipoNombre,
+            equipmentId: equipmentId,
+            mediaDocId: item.id,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (item.kind == _ArchivoKind.video) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VisorVideoScreen(
+            videoUrl: openUrl,
+            titulo: equipoNombre,
+            equipmentId: equipmentId,
+            mediaDocId: item.id,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<String> _resolveMediaUrl(String source) async {
+    final lower = source.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      return source;
+    }
+
+    try {
+      if (lower.startsWith('gs://')) {
+        return await FirebaseStorage.instance.refFromURL(source).getDownloadURL();
+      }
+      return await FirebaseStorage.instance.ref(source).getDownloadURL();
+    } catch (_) {
+      return source;
+    }
+  }
+}
+
+class _CategoryTileData {
+  const _CategoryTileData({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+}
+
+class _CategoryTile extends StatelessWidget {
+  const _CategoryTile({required this.item});
+
+  final _CategoryTileData item;
+
+  static const Color _iconColor = Color(0xFF11CAA0);
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.white,
+      elevation: 2.8,
+      shadowColor: Colors.black26,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {},
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(item.icon, color: _iconColor, size: 28),
+            const SizedBox(height: 6),
+            Text(
+              item.label,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF23374D),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchivoTile extends StatelessWidget {
+  const _ArchivoTile({required this.item, required this.onTap});
+
+  final _ArchivoListItem item;
+  final VoidCallback onTap;
+
+  static const Color _leftStripeColor = Color(0xFF0B5AA3);
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: item.kind == _ArchivoKind.file ? null : onTap,
+        child: Row(
+          children: [
+            Container(
+              width: 4,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: _leftStripeColor,
+                borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(item.icon, color: _leftStripeColor, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(
+                  item.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(item.meta, style: const TextStyle(fontSize: 12)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchivoListItem {
+  const _ArchivoListItem({
+    required this.id,
+    required this.displayName,
+    required this.source,
+    required this.kind,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String displayName;
+  final String source;
+  final _ArchivoKind kind;
+  final DateTime? createdAt;
+
+  String get meta {
+    final ext = _extensionLabel;
+    final date = createdAt == null
+        ? 'sin fecha'
+        : '${createdAt!.day.toString().padLeft(2, '0')}/'
+              '${createdAt!.month.toString().padLeft(2, '0')}/'
+              '${createdAt!.year}';
+    return '$ext · $date';
+  }
+
+  String get _extensionLabel {
+    final sourceBase = source.split('?').first;
+    final sourceExt = sourceBase.contains('.') ? sourceBase.split('.').last : '';
+    final ext = sourceExt.isEmpty ? '' : sourceExt.toUpperCase();
+    if (kind == _ArchivoKind.video) return ext.isEmpty ? 'VIDEO' : ext;
+    if (kind == _ArchivoKind.image) return ext.isEmpty ? 'IMAGEN' : ext;
+    return ext.isEmpty ? 'ARCHIVO' : ext;
+  }
+
+  IconData get icon {
+    switch (kind) {
+      case _ArchivoKind.image:
+        return Icons.image_rounded;
+      case _ArchivoKind.video:
+        return Icons.play_circle_filled_rounded;
+      case _ArchivoKind.file:
+        return Icons.description_rounded;
+    }
+  }
+
+  factory _ArchivoListItem.fromMedia(MediaItem media) {
+    final title = media.caption.trim().isNotEmpty
+        ? media.caption.trim()
+        : (media.name.trim().isNotEmpty ? media.name.trim() : 'Archivo sin titulo');
+
+    return _ArchivoListItem(
+      id: media.id,
+      displayName: title,
+      source: media.source,
+      kind: _kindFromMediaType(media.type),
+      createdAt: media.createdAt,
     );
   }
 
@@ -238,824 +404,6 @@ class DetalleEquipoPage extends StatelessWidget {
         return _ArchivoKind.file;
     }
   }
-
-  static String _userInitials(User? user) {
-    if (user == null) return '?';
-    final name = user.displayName;
-    if (name != null && name.trim().isNotEmpty) {
-      final parts = name.trim().split(RegExp(r'\s+'));
-      return parts.map((p) => p[0]).take(2).join().toUpperCase();
-    }
-    final email = user.email;
-    if (email != null && email.isNotEmpty) return email[0].toUpperCase();
-    return '?';
-  }
-
-  String _formatDate(DateTime date) {
-    try {
-      return DateFormat('dd MMM yyyy, HH:mm', 'es').format(date);
-    } catch (_) {
-      return DateFormat('dd/MM/yyyy HH:mm').format(date);
-    }
-  }
-
-  Future<String> _resolveMediaUrlForOpen(String source) async {
-    final lower = source.toLowerCase();
-    if (lower.startsWith('http://') || lower.startsWith('https://')) {
-      return source;
-    }
-
-    try {
-      if (lower.startsWith('gs://')) {
-        return await FirebaseStorage.instance
-            .refFromURL(source)
-            .getDownloadURL();
-      }
-      return await FirebaseStorage.instance.ref(source).getDownloadURL();
-    } catch (_) {
-      return source;
-    }
-  }
-
-  Future<void> _confirmAndDeleteFile({
-    required BuildContext context,
-    required String mediaSource,
-    required String equipmentId,
-  }) async {
-    final shouldDelete = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('¿Eliminar este archivo?'),
-          content: const Text(
-            'Esta acción borrará la foto de la base de datos y del almacenamiento permanentemente.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('CANCELAR'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text('ELIMINAR', style: TextStyle(color: Colors.red[400])),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (shouldDelete != true) return;
-
-    try {
-      await _deleteMediaUseCase.call(
-        equipmentId: equipmentId,
-        mediaSource: mediaSource,
-      );
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Archivo eliminado correctamente')),
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      final message = AppErrorMapper.toUserMessage(error);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
-  }
-}
-
-class _DetailContent extends StatelessWidget {
-  const _DetailContent({
-    required this.description,
-    required this.historial,
-    required this.eventMediaStream,
-    required this.equipoNombre,
-    required this.formatDate,
-    required this.resolveMediaUrlForOpen,
-    required this.confirmAndDeleteFile,
-    required this.equipmentId,
-    required this.useDesktopLayout,
-  });
-
-  final String description;
-  final List<_HistorialItem> historial;
-  final Stream<List<EquipmentEventMedia>> eventMediaStream;
-  final String equipoNombre;
-  final String Function(DateTime date) formatDate;
-  final Future<String> Function(String source) resolveMediaUrlForOpen;
-  final Future<void> Function({
-    required BuildContext context,
-    required String mediaSource,
-    required String equipmentId,
-  }) confirmAndDeleteFile;
-  final String equipmentId;
-  final bool useDesktopLayout;
-
-  @override
-  Widget build(BuildContext context) {
-    // ── Franja blanca (móvil) o tarjeta (desktop) ────────────────────────
-    final summaryCard = useDesktopLayout
-        ? Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  equipoNombre,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.azulAustral,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description.isNotEmpty
-                      ? description
-                      : 'Sin descripcion cargada.',
-                  style: const TextStyle(
-                    color: AppColors.darkGray,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          )
-        // Móvil: franja plana borde a borde (sin padding del padre)
-        : Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-            color: Colors.white,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  equipoNombre,
-                  style: const TextStyle(
-                    color: AppColors.azulAustral,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    description,
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          );
-
-    final gallerySection = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Historial de Mantenimiento',
-          style: TextStyle(
-            color: AppColors.azulAustral,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: StreamBuilder<List<EquipmentEventMedia>>(
-            stream: eventMediaStream,
-            builder: (context, snapshot) {
-              final eventGroups = snapshot.data ?? const <EquipmentEventMedia>[];
-
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  eventGroups.isEmpty &&
-                  historial.isEmpty) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              if (eventGroups.isNotEmpty) {
-                return _EventPhotosList(
-                  eventGroups: eventGroups,
-                  formatDate: formatDate,
-                  resolveMediaUrlForOpen: resolveMediaUrlForOpen,
-                  equipoNombre: equipoNombre,
-                );
-              }
-
-              if (historial.isEmpty) {
-                return const Center(
-                  child: Text(
-                    'No hay archivos cargados aun.',
-                    style: TextStyle(color: AppColors.darkGray),
-                  ),
-                );
-              }
-
-              return LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = constraints.maxWidth;
-                  Widget buildCard(_HistorialItem item) {
-                    return _HistorialCard(
-                      mediaSource: item.source,
-                      kind: item.kind,
-                      dateText: item.uploadedAt == null
-                          ? 'Fecha no disponible'
-                          : formatDate(item.uploadedAt!),
-                      equipmentId: equipmentId,
-                      mediaDocId: item.mediaDocId,
-                      name: item.name,
-                      caption: item.caption,
-                      onTap: () async {
-                        final openUrl = await resolveMediaUrlForOpen(item.source);
-
-                        if (item.kind == _ArchivoKind.image) {
-                          if (!context.mounted) return;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => VisorImagenScreen(
-                                imageUrl: openUrl,
-                                titulo: equipoNombre,
-                                equipmentId: equipmentId,
-                                mediaDocId: item.mediaDocId,
-                              ),
-                            ),
-                          );
-                          return;
-                        }
-
-                        if (item.kind == _ArchivoKind.video) {
-                          if (!context.mounted) return;
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => VisorVideoScreen(
-                                videoUrl: openUrl,
-                                titulo: equipoNombre,
-                                equipmentId: equipmentId,
-                                mediaDocId: item.mediaDocId,
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                      onDelete: () => confirmAndDeleteFile(
-                        context: context,
-                        mediaSource: item.source,
-                        equipmentId: equipmentId,
-                      ),
-                    );
-                  }
-
-                  if (width > 900) {
-                    return GridView.extent(
-                      maxCrossAxisExtent: 400,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 1.08,
-                      children: historial.map(buildCard).toList(),
-                    );
-                  }
-
-                  return ListView.separated(
-                    itemCount: historial.length,
-                    separatorBuilder: (_, index) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) => buildCard(historial[index]),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
-    );
-
-    if (useDesktopLayout) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: summaryCard),
-          const SizedBox(width: 20),
-          Expanded(child: gallerySection),
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        summaryCard,
-        const SizedBox(height: 20),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: gallerySection,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _HistorialCard extends StatefulWidget {
-  const _HistorialCard({
-    required this.mediaSource,
-    required this.kind,
-    required this.dateText,
-    required this.onTap,
-    required this.onDelete,
-    required this.equipmentId,
-    required this.mediaDocId,
-    required this.name,
-    required this.caption,
-  });
-
-  final String mediaSource;
-  final _ArchivoKind kind;
-  final String dateText;
-  final VoidCallback onTap;
-  final Future<void> Function() onDelete;
-  final String equipmentId;
-  final String mediaDocId;
-  final String name;
-  final String caption;
-
-  @override
-  State<_HistorialCard> createState() => _HistorialCardState();
-}
-
-class _HistorialCardState extends State<_HistorialCard> {
-  bool _isHovered = false;
-
-  bool _isRemoteUrl(String value) {
-    final lower = value.toLowerCase();
-    return lower.startsWith('http://') ||
-        lower.startsWith('https://') ||
-        lower.startsWith('gs://');
-  }
-
-  Future<String> _resolveMediaUrl(String source) async {
-    final lower = source.toLowerCase();
-    if (lower.startsWith('http://') || lower.startsWith('https://')) {
-      return source;
-    }
-    if (lower.startsWith('gs://')) {
-      return FirebaseStorage.instance.refFromURL(source).getDownloadURL();
-    }
-    return FirebaseStorage.instance.ref(source).getDownloadURL();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.of(context).size.width >= 900;
-    final baseElevation = isDesktop ? 3.0 : 1.5;
-    final hoverElevation = isDesktop ? 7.0 : baseElevation;
-    final targetElevation = _isHovered ? hoverElevation : baseElevation;
-
-    Widget buildThumbnail() {
-      if (widget.kind == _ArchivoKind.image) {
-        return FutureBuilder<String>(
-          future: _resolveMediaUrl(widget.mediaSource),
-          builder: (context, snapshot) {
-            final resolved = snapshot.data;
-            if (resolved != null && _isRemoteUrl(resolved)) {
-              return CachedNetworkImage(
-                imageUrl: resolved,
-                fit: BoxFit.cover,
-                placeholder: (context, imageUrl) => Container(
-                  color: const Color(0xFFF0F3F8),
-                  child: const Icon(
-                    Icons.image_outlined,
-                    color: AppColors.azulAustral,
-                    size: 28,
-                  ),
-                ),
-                errorWidget: (context, imageUrl, error) => Container(
-                  color: const Color(0xFFF0F3F8),
-                  child: const Icon(
-                    Icons.broken_image_outlined,
-                    color: AppColors.azulAustral,
-                    size: 28,
-                  ),
-                ),
-              );
-            }
-            return Container(
-              color: const Color(0xFFF0F3F8),
-              child: const Icon(
-                Icons.image_outlined,
-                color: AppColors.azulAustral,
-                size: 28,
-              ),
-            );
-          },
-        );
-      }
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          Container(
-            color: const Color(0xFFF0F3F8),
-            child: Icon(
-              widget.kind == _ArchivoKind.video
-                  ? Icons.videocam_rounded
-                  : Icons.insert_drive_file_rounded,
-              color: AppColors.azulAustral,
-              size: 32,
-            ),
-          ),
-          if (widget.kind == _ArchivoKind.video)
-            const Center(
-              child: Icon(Icons.play_circle_outline, color: Colors.white70, size: 32),
-            ),
-        ],
-      );
-    }
-
-    return MouseRegion(
-      onEnter: (_) {
-        if (!isDesktop) return;
-        setState(() => _isHovered = true);
-      },
-      onExit: (_) {
-        if (!isDesktop) return;
-        setState(() => _isHovered = false);
-      },
-      child: AnimatedScale(
-        scale: _isHovered ? 1.01 : 1,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: targetElevation),
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          builder: (context, elevation, child) {
-            final hoverBorderColor =
-                isDesktop && _isHovered
-                ? AppColors.azulAustral.withValues(alpha: 0.24)
-                : Colors.transparent;
-            return Card(
-              color: Colors.white,
-              elevation: elevation,
-              shadowColor: Colors.black26,
-              margin: EdgeInsets.zero,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: hoverBorderColor, width: 0.9),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: child,
-            );
-          },
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: widget.onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      width: 80,
-                      height: 80,
-                      child: buildThumbnail(),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.caption.isNotEmpty)
-                          Text(
-                            widget.caption,
-                            style: const TextStyle(
-                              color: AppColors.azulAustral,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        if (false) ...[ // caption ya es el título, bloque caption secundario deshabilitado
-                          const SizedBox(height: 3),
-                          Text(
-                            widget.caption,
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 13,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.dateText,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.darkGray,
-                          ),
-                        ),
-                        if (widget.mediaDocId.isNotEmpty)
-                          _CardCommentPreview(
-                            equipmentId: widget.equipmentId,
-                            mediaDocId: widget.mediaDocId,
-                          ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: widget.onDelete,
-                    icon: Icon(Icons.delete_outline, color: Colors.red[400]),
-                    splashRadius: 16,
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Eliminar archivo',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _EventPhotosList extends StatelessWidget {
-  const _EventPhotosList({
-    required this.eventGroups,
-    required this.formatDate,
-    required this.resolveMediaUrlForOpen,
-    required this.equipoNombre,
-  });
-
-  final List<EquipmentEventMedia> eventGroups;
-  final String Function(DateTime date) formatDate;
-  final Future<String> Function(String source) resolveMediaUrlForOpen;
-  final String equipoNombre;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.separated(
-      itemCount: eventGroups.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final event = eventGroups[index];
-        return Card(
-          margin: EdgeInsets.zero,
-          elevation: 1.5,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEAF2FF),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        event.type.isEmpty ? 'evento' : event.type,
-                        style: const TextStyle(
-                          color: AppColors.azulAustral,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      event.timestamp == null
-                          ? 'Fecha no disponible'
-                          : formatDate(event.timestamp!),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.darkGray,
-                      ),
-                    ),
-                  ],
-                ),
-                if (event.text.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    event.text,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.darkGray,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: event.photos.map((photo) {
-                    return _EventPhotoThumb(
-                      item: photo,
-                      resolveMediaUrlForOpen: resolveMediaUrlForOpen,
-                      onOpen: (openUrl) {
-                        if (photo.type == MediaType.video) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => VisorVideoScreen(
-                                videoUrl: openUrl,
-                                titulo: equipoNombre,
-                              ),
-                            ),
-                          );
-                          return;
-                        }
-
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => VisorImagenScreen(
-                              imageUrl: openUrl,
-                              titulo: equipoNombre,
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _EventPhotoThumb extends StatelessWidget {
-  const _EventPhotoThumb({
-    required this.item,
-    required this.resolveMediaUrlForOpen,
-    required this.onOpen,
-  });
-
-  final MediaItem item;
-  final Future<String> Function(String source) resolveMediaUrlForOpen;
-  final void Function(String openUrl) onOpen;
-
-  bool _isRemoteUrl(String value) {
-    final lower = value.toLowerCase();
-    return lower.startsWith('http://') || lower.startsWith('https://');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () async {
-        final openUrl = await resolveMediaUrlForOpen(item.source);
-        if (!context.mounted) return;
-        onOpen(openUrl);
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          width: 92,
-          height: 92,
-          child: FutureBuilder<String>(
-            future: resolveMediaUrlForOpen(item.source),
-            builder: (context, snapshot) {
-              final resolved = snapshot.data;
-              if (resolved != null && _isRemoteUrl(resolved)) {
-                return CachedNetworkImage(
-                  imageUrl: resolved,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(
-                    color: const Color(0xFFF0F3F8),
-                    child: const Icon(
-                      Icons.image_outlined,
-                      color: AppColors.azulAustral,
-                      size: 24,
-                    ),
-                  ),
-                  errorWidget: (_, __, ___) => Container(
-                    color: const Color(0xFFF0F3F8),
-                    child: const Icon(
-                      Icons.broken_image_outlined,
-                      color: AppColors.azulAustral,
-                      size: 24,
-                    ),
-                  ),
-                );
-              }
-
-              return Container(
-                color: const Color(0xFFF0F3F8),
-                child: const Icon(
-                  Icons.image_outlined,
-                  color: AppColors.azulAustral,
-                  size: 24,
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HistorialItem {
-  const _HistorialItem({
-    required this.source,
-    required this.kind,
-    required this.uploadedAt,
-    required this.mediaDocId,
-    required this.name,
-    required this.caption,
-  });
-
-  final String source;
-  final _ArchivoKind kind;
-  final DateTime? uploadedAt;
-  final String mediaDocId;
-  final String name;
-  final String caption;
 }
 
 enum _ArchivoKind { image, video, file }
-
-class _CardCommentPreview extends StatelessWidget {
-  const _CardCommentPreview({
-    required this.equipmentId,
-    required this.mediaDocId,
-  });
-
-  final String equipmentId;
-  final String mediaDocId;
-
-  static final EquipmentRepository _repo = EquipmentRepository();
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<CommentModel>>(
-      stream: _repo.watchComments(
-        equipmentId: equipmentId,
-        mediaDocId: mediaDocId,
-      ),
-      builder: (context, snapshot) {
-        final comments = snapshot.data;
-        if (comments == null || comments.isEmpty) return const SizedBox.shrink();
-        final latest = comments.last;
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(
-                Icons.comment_outlined,
-                size: 11,
-                color: Color(0xFF888888),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  '${comments.length} '
-                  'comentario${comments.length != 1 ? 's' : ''}: '
-                  '${latest.text}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    color: Color(0xFF888888),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
