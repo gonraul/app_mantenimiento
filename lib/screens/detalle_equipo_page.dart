@@ -20,10 +20,10 @@ class DetalleEquipoPage extends StatelessWidget {
       GetEquipmentDetailStreamUseCase(_repository);
 
   static const List<_CategoryTileData> _categories = [
-    _CategoryTileData(label: 'Manuales', icon: Icons.picture_as_pdf_rounded),
+    _CategoryTileData(label: 'Procedimientos', icon: Icons.checklist_rounded),
     _CategoryTileData(label: 'Videos', icon: Icons.videocam_rounded),
     _CategoryTileData(label: 'Fotos', icon: Icons.image_rounded),
-    _CategoryTileData(label: 'Notas', icon: Icons.sticky_note_2_rounded),
+    _CategoryTileData(label: 'Historial', icon: Icons.history_rounded),
   ];
 
   @override
