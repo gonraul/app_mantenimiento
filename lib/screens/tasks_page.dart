@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/equipment.dart';
@@ -125,10 +126,32 @@ class _TopHeader extends StatelessWidget {
   final double progress;
   final double screenHeight;
 
+  String _buildInitials(User? user) {
+    final rawName = user?.displayName?.trim() ?? '';
+    if (rawName.isEmpty) {
+      return 'US';
+    }
+
+    final parts = rawName.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      final first = parts.first.substring(0, 1).toUpperCase();
+      final second = parts[1].substring(0, 1).toUpperCase();
+      return '$first$second';
+    }
+
+    final single = parts.first;
+    if (single.length == 1) {
+      return single.toUpperCase();
+    }
+    return single.substring(0, 2).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
     final logoScale = lerpDouble(1.0, 0.8, progress)!;
+    final user = FirebaseAuth.instance.currentUser;
+    final initials = _buildInitials(user);
 
     return SizedBox.expand(
       child: Stack(
@@ -149,17 +172,16 @@ class _TopHeader extends StatelessWidget {
                   tooltip: 'Menu',
                 ),
                 const Spacer(),
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: const BoxDecoration(
-                    color: AppColors.verdeAustral,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.person,
-                    color: Colors.white,
-                    size: 22,
+                CircleAvatar(
+                  radius: 19,
+                  backgroundColor: const Color(0xFF11CAA0),
+                  child: Text(
+                    initials,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -350,7 +372,7 @@ class _EquipmentsGrid extends StatelessWidget {
             crossAxisCount: 2,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            mainAxisExtent: 132,
+            mainAxisExtent: 110,
           ),
           itemBuilder: (context, index) {
             final equipment = equipments[index];
@@ -388,99 +410,98 @@ class _EquipmentCard extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
-      child: Ink(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+      child: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black12,
+                  blurRadius: 4,
+                  offset: Offset(0, 2),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Stack(
-          children: [
-            Positioned(
-              top: 0,
-              left: 0,
-              child: ClipPath(
-                clipper: _TriangleClipper(),
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF1A3A6E), Color(0xFF0E7060)],
-                    ),
+            padding: const EdgeInsets.fromLTRB(12, 36, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  equipment.title.trim().isEmpty
+                      ? 'Equipo sin nombre'
+                      : equipment.title.trim(),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF1A3A6E),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Expanded(
+                  child: StreamBuilder<String>(
+                    stream: latestEventTextStream,
+                    builder: (context, snapshot) {
+                      final latestText = (snapshot.data ?? '').trim();
+                      final subtitle =
+                          latestText.isEmpty ? _fallbackDescription() : latestText;
+
+                      if (subtitle.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '• ',
+                            style: TextStyle(
+                              color: AppColors.verdeAustral,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF5A6575),
+                                fontSize: 11,
+                                height: 1.2,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            child: ClipPath(
+              clipper: _TriangleClipper(),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF1A3A6E), Color(0xFF0E7060)],
                   ),
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    equipment.title.trim().isEmpty
-                        ? 'Equipo sin nombre'
-                        : equipment.title.trim(),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF1A3A6E),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Expanded(
-                    child: StreamBuilder<String>(
-                      stream: latestEventTextStream,
-                      builder: (context, snapshot) {
-                        final latestText = (snapshot.data ?? '').trim();
-                        final subtitle =
-                            latestText.isEmpty ? _fallbackDescription() : latestText;
-
-                        if (subtitle.isEmpty) {
-                          return const SizedBox.shrink();
-                        }
-
-                        return RichText(
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          text: TextSpan(
-                            children: [
-                              const TextSpan(
-                                text: '• ',
-                                style: TextStyle(
-                                  color: AppColors.verdeAustral,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              TextSpan(
-                                text: subtitle,
-                                style: const TextStyle(
-                                  color: Color(0xFF434C5A),
-                                  fontSize: 11,
-                                  height: 1.3,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

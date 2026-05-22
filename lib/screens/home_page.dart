@@ -230,17 +230,19 @@ class _UserAvatar extends StatelessWidget {
   final double radius;
 
   String _initials(User? user) {
-    if (user == null) return '?';
-    final name = user.displayName;
-    if (name != null && name.trim().isNotEmpty) {
-      final parts = name.trim().split(RegExp(r'\s+'));
-      return parts.map((p) => p[0]).take(3).join().toUpperCase();
+    final rawName = user?.displayName?.trim() ?? '';
+    if (rawName.isEmpty) return 'US';
+
+    final parts = rawName.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      final first = parts.first.substring(0, 1).toUpperCase();
+      final second = parts[1].substring(0, 1).toUpperCase();
+      return '$first$second';
     }
-    final email = user.email;
-    if (email != null && email.isNotEmpty) {
-      return email[0].toUpperCase();
-    }
-    return '?';
+
+    final single = parts.first;
+    if (single.length == 1) return single.toUpperCase();
+    return single.substring(0, 2).toUpperCase();
   }
 
   @override
@@ -249,13 +251,13 @@ class _UserAvatar extends StatelessWidget {
     final initials = _initials(user);
     return CircleAvatar(
       radius: radius,
-      backgroundColor: Colors.white24,
+      backgroundColor: const Color(0xFF11CAA0),
       child: Text(
         initials,
         style: TextStyle(
           color: Colors.white,
           fontWeight: FontWeight.bold,
-          fontSize: radius * 0.8,
+          fontSize: 14,
         ),
       ),
     );

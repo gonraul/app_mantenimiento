@@ -1,35 +1,55 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../models/equipment.dart';
 import '../models/media_item.dart';
 import '../services/equipment_repository.dart';
 import '../theme/app_theme.dart';
 import '../use_cases/get_equipment_detail_stream_use_case.dart';
+import 'widgets/historial_equipo_widget.dart';
 import 'upload_content_screen.dart';
 import 'visor_imagen_screen.dart';
+import 'visor_pdf_page.dart';
 import 'visor_video_screen.dart';
 
-class DetalleEquipoPage extends StatelessWidget {
+class DetalleEquipoPage extends StatefulWidget {
   const DetalleEquipoPage({super.key, required this.equipmentId});
 
   final String equipmentId;
 
+  @override
+  State<DetalleEquipoPage> createState() => _DetalleEquipoPageState();
+}
+
+class _DetalleEquipoPageState extends State<DetalleEquipoPage> {
   static final EquipmentRepository _repository = EquipmentRepository();
   static final GetEquipmentDetailStreamUseCase _detailUseCase =
       GetEquipmentDetailStreamUseCase(_repository);
 
   static const List<_CategoryTileData> _categories = [
-    _CategoryTileData(label: 'Manuales', icon: Icons.picture_as_pdf_rounded),
+    _CategoryTileData(label: 'Documentos', icon: Icons.fact_check_outlined),
     _CategoryTileData(label: 'Videos', icon: Icons.videocam_rounded),
     _CategoryTileData(label: 'Fotos', icon: Icons.image_rounded),
-    _CategoryTileData(label: 'Notas', icon: Icons.sticky_note_2_rounded),
+    _CategoryTileData(label: 'Historial', icon: Icons.history_rounded),
   ];
+
+  late final Stream<Equipment?> _equipmentStream;
+  String _searchText = '';
+  bool _isSearching = false;
+  String? _selectedCategory;
+
+  @override
+  void initState() {
+    super.initState();
+    _equipmentStream = _detailUseCase.call(widget.equipmentId);
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<Equipment?>(
-      stream: _detailUseCase.call(equipmentId),
+      stream: _equipmentStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Scaffold(
@@ -54,18 +74,42 @@ class DetalleEquipoPage extends StatelessWidget {
             ? 'equipo'
             : equipment.title.trim().toLowerCase();
 
-        final files = equipment.media
-            .where((media) => media.source.trim().isNotEmpty)
-            .map(_ArchivoListItem.fromMedia)
-            .toList()
-          ..sort((a, b) {
-            final aDate = a.createdAt;
-            final bDate = b.createdAt;
-            if (aDate == null && bDate == null) return 0;
-            if (aDate == null) return 1;
-            if (bDate == null) return -1;
-            return bDate.compareTo(aDate);
-          });
+        var files =
+            equipment.media
+                .where((media) => media.source.trim().isNotEmpty)
+                .map(_ArchivoListItem.fromMedia)
+                .toList()
+              ..sort((a, b) {
+                final aDate = a.createdAt;
+                final bDate = b.createdAt;
+                if (aDate == null && bDate == null) return 0;
+                if (aDate == null) return 1;
+                if (bDate == null) return -1;
+                return bDate.compareTo(aDate);
+              });
+
+        if (_selectedCategory != null) {
+          files = files.where((f) {
+            if (_selectedCategory == 'Documentos')
+              return f.kind == _ArchivoKind.file;
+            if (_selectedCategory == 'Videos')
+              return f.kind == _ArchivoKind.video;
+            if (_selectedCategory == 'Fotos')
+              return f.kind == _ArchivoKind.image;
+            return true;
+          }).toList();
+        }
+
+        if (_searchText.trim().isNotEmpty) {
+          final query = _searchText.toLowerCase();
+          files = files.where((f) {
+            final matchesName = f.displayName.toLowerCase().contains(query);
+            final matchesMeta = f.meta.toLowerCase().contains(query);
+            return matchesName || matchesMeta;
+          }).toList();
+        }
+
+        final shouldCompact = _isSearching || _selectedCategory != null;
 
         return Scaffold(
           extendBodyBehindAppBar: true,
@@ -84,7 +128,9 @@ class DetalleEquipoPage extends StatelessWidget {
             children: [
               Positioned.fill(
                 child: Container(
-                  decoration: const BoxDecoration(gradient: AppColors.australGradient),
+                  decoration: const BoxDecoration(
+                    gradient: AppColors.australGradient,
+                  ),
                 ),
               ),
               Positioned.fill(
@@ -101,30 +147,96 @@ class DetalleEquipoPage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        GridView.count(
-                          padding: EdgeInsets.zero,
-                          crossAxisCount: 2,
-                          childAspectRatio: 1.5,
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          children: _categories
-                              .map((item) => _CategoryTile(item: item))
-                              .toList(),
-                        ),
-                        const SizedBox(height: 18),
-                        const Text(
-                          'Archivos cargados',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF395878),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          child: GridView.count(
+                            padding: EdgeInsets.zero,
+                            crossAxisCount: shouldCompact ? 4 : 2,
+                            childAspectRatio: shouldCompact ? 1.0 : 1.5,
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                            children: _categories
+                                .map(
+                                  (item) => _CategoryTile(
+                                    item: item,
+                                    isSelected: _selectedCategory == item.label,
+                                    isCompact: shouldCompact,
+                                    onTap: () {
+                                      setState(() {
+                                        if (_selectedCategory == item.label) {
+                                          _selectedCategory = null;
+                                        } else {
+                                          _selectedCategory = item.label;
+                                        }
+                                      });
+                                    },
+                                  ),
+                                )
+                                .toList(),
                           ),
                         ),
+                        const SizedBox(height: 18),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _selectedCategory == 'Historial'
+                                  ? 'Historial de eventos'
+                                  : 'Archivos cargados',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF395878),
+                              ),
+                            ),
+                            if (_selectedCategory != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear, size: 20),
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedCategory = null;
+                                  });
+                                },
+                              ),
+                          ],
+                        ),
+                        if (_isSearching)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 12),
+                            child: TextField(
+                              autofocus: true,
+                              decoration: InputDecoration(
+                                hintText: 'Buscar por fecha o nombre...',
+                                prefixIcon: const Icon(Icons.search),
+                                suffixIcon: _searchText.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () {
+                                          setState(() => _searchText = '');
+                                        },
+                                      )
+                                    : null,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                              ),
+                              onChanged: (val) {
+                                setState(() {
+                                  _searchText = val;
+                                });
+                              },
+                            ),
+                          ),
                         const SizedBox(height: 10),
                         Expanded(
-                          child: files.isEmpty
+                          child: _selectedCategory == 'Historial'
+                              ? _buildHistorialSection(context, equipoNombre)
+                              : files.isEmpty
                               ? const Center(
                                   child: Text(
                                     'Todavia no hay archivos cargados.',
@@ -134,12 +246,17 @@ class DetalleEquipoPage extends StatelessWidget {
                               : ListView.separated(
                                   padding: EdgeInsets.zero,
                                   itemCount: files.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                                  separatorBuilder: (context, index) =>
+                                      const SizedBox(height: 10),
                                   itemBuilder: (context, index) {
                                     final item = files[index];
                                     return _ArchivoTile(
                                       item: item,
-                                      onTap: () => _openFile(context, item, equipoNombre),
+                                      onTap: () => _openFile(
+                                        context,
+                                        item,
+                                        equipoNombre,
+                                      ),
                                     );
                                   },
                                 ),
@@ -171,14 +288,21 @@ class DetalleEquipoPage extends StatelessWidget {
               ),
             ],
             onDestinationSelected: (index) {
-              if (index == 1) return;
+              if (index == 1) {
+                setState(() {
+                  _isSearching = !_isSearching;
+                  if (!_isSearching) _searchText = '';
+                });
+                return;
+              }
               if (index == 0) {
                 Navigator.of(context).pop();
                 return;
               }
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => UploadContentScreen(initialTopicId: equipment.id),
+                  builder: (_) =>
+                      UploadContentScreen(initialTopicId: equipment.id),
                 ),
               );
             },
@@ -196,13 +320,27 @@ class DetalleEquipoPage extends StatelessWidget {
     final openUrl = await _resolveMediaUrl(item.source);
     if (!context.mounted) return;
 
+    if (item.kind == _ArchivoKind.file) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => VisorPdfPage(
+            pdfUrl: openUrl,
+            titulo: item.displayName,
+            equipmentId: widget.equipmentId,
+            mediaDocId: item.id,
+          ),
+        ),
+      );
+      return;
+    }
+
     if (item.kind == _ArchivoKind.image) {
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => VisorImagenScreen(
             imageUrl: openUrl,
-            titulo: equipoNombre,
-            equipmentId: equipmentId,
+            titulo: item.displayName,
+            equipmentId: widget.equipmentId,
             mediaDocId: item.id,
           ),
         ),
@@ -215,12 +353,215 @@ class DetalleEquipoPage extends StatelessWidget {
         MaterialPageRoute(
           builder: (_) => VisorVideoScreen(
             videoUrl: openUrl,
-            titulo: equipoNombre,
-            equipmentId: equipmentId,
+            titulo: item.displayName,
+            equipmentId: widget.equipmentId,
             mediaDocId: item.id,
           ),
         ),
       );
+    }
+  }
+
+  Future<void> _openTimelineDocument(
+    BuildContext context,
+    HistorialEvent event,
+    String equipoNombre,
+  ) async {
+    if ((event.url ?? '').trim().isEmpty) return;
+
+    await abrirArchivoCorrecto(
+      context,
+      (event.url ?? '').trim(),
+      (event.titulo ?? '').trim().isEmpty
+          ? 'Documento de $equipoNombre'
+          : (event.titulo ?? '').trim(),
+      event.ext,
+      eventId: event.id,
+      createdAt: event.fecha,
+    );
+  }
+
+  Widget _buildHistorialSection(BuildContext context, String equipoNombre) {
+    final historialStream = FirebaseFirestore.instance
+        .collection('equipos')
+        .doc(widget.equipmentId)
+        .collection('historial')
+        .orderBy('fecha', descending: true)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: historialStream,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'No se pudo cargar el historial.',
+              style: TextStyle(color: Colors.black54),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final docs = snapshot.data?.docs ?? const [];
+        final eventos = docs
+            .map((doc) => _mapHistorialDocToEvent(doc.id, doc.data()))
+            .toList();
+
+        return HistorialEquipoWidget(
+          eventos: eventos,
+          onTapDocumento: (evento) {
+            _openTimelineDocument(context, evento, equipoNombre);
+          },
+        );
+      },
+    );
+  }
+
+  HistorialEvent _mapHistorialDocToEvent(
+    String docId,
+    Map<String, dynamic> data,
+  ) {
+    final tipoRaw = ((data['tipo'] as String?) ?? '').trim().toLowerCase();
+    final tipo = _normalizeHistorialType(tipoRaw);
+
+    final fecha = _dateFromAny(
+      data['fecha'] ?? data['timestamp'] ?? data['createdAt'] ?? data['created_at'],
+    );
+
+    final tecnico = ((data['tecnico'] as String?) ??
+            (data['usuario'] as String?) ??
+            (data['author'] as String?) ??
+            'Sistema')
+        .trim();
+
+    final descripcion = ((data['descripcion'] as String?) ??
+            (data['texto'] as String?) ??
+            (data['mensaje'] as String?) ??
+            'Sin detalle')
+        .trim();
+
+    final titulo = ((data['titulo'] as String?) ??
+            (data['nombre'] as String?) ??
+            (data['archivo'] as String?) ??
+            'Documento')
+        .trim();
+
+    final url = ((data['url'] as String?) ??
+            (data['storagePath'] as String?) ??
+            (data['source'] as String?) ??
+            (data['documentUrl'] as String?) ??
+            '')
+        .trim();
+
+    final ext = ((data['ext'] as String?) ??
+            (data['extension'] as String?) ??
+            _extensionFromUrl(url))
+        .trim();
+
+    final cabecera = tipo == 'chat'
+        ? 'Via Chatbot - Por: ${tecnico.isEmpty ? 'Sistema' : tecnico}'
+        : 'Por: ${tecnico.isEmpty ? 'Sistema' : tecnico}';
+
+    return HistorialEvent(
+      id: docId,
+      tipo: tipo,
+      cabecera: cabecera,
+      descripcion: descripcion,
+      fechaLabel: _formatFechaLabel(fecha),
+      url: url.isEmpty ? null : url,
+      titulo: titulo,
+      ext: ext,
+      fecha: fecha,
+    );
+  }
+
+  String _normalizeHistorialType(String tipoRaw) {
+    if (tipoRaw == 'chat' || tipoRaw == 'gemini' || tipoRaw == 'consulta') {
+      return 'chat';
+    }
+    if (tipoRaw == 'documento' || tipoRaw == 'archivo' || tipoRaw == 'file') {
+      return 'documento';
+    }
+    if (tipoRaw == 'sistema' || tipoRaw == 'warning' || tipoRaw == 'alerta') {
+      return 'sistema';
+    }
+    return 'sistema';
+  }
+
+  String _formatFechaLabel(DateTime? fecha) {
+    if (fecha == null) return 'Sin fecha';
+    final now = DateTime.now();
+    final sameDay =
+        now.year == fecha.year && now.month == fecha.month && now.day == fecha.day;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = yesterday.year == fecha.year &&
+        yesterday.month == fecha.month &&
+        yesterday.day == fecha.day;
+
+    final hour = DateFormat('HH:mm', 'es').format(fecha);
+    if (sameDay) return 'Hoy $hour';
+    if (isYesterday) return 'Ayer $hour';
+    return DateFormat('dd/MM HH:mm', 'es').format(fecha);
+  }
+
+  String _extensionFromUrl(String url) {
+    if (url.trim().isEmpty) return '';
+    final source = url.split('?').first;
+    final dot = source.lastIndexOf('.');
+    if (dot == -1 || dot == source.length - 1) return '';
+    return source.substring(dot + 1).toLowerCase();
+  }
+
+  DateTime? _dateFromAny(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  Future<void> abrirArchivoCorrecto(
+    BuildContext context,
+    String source,
+    String titulo,
+    String? ext, {
+    String eventId = '',
+    DateTime? createdAt,
+  }) async {
+    final normalizedExt = (ext ?? '').trim().toLowerCase();
+    final resolvedExt = normalizedExt.isEmpty ? _extensionFromUrl(source) : normalizedExt;
+
+    final kind = _inferFileKindFromExtension(resolvedExt);
+    final timelineItem = _ArchivoListItem(
+      id: eventId,
+      displayName: titulo,
+      source: source,
+      kind: kind,
+      createdAt: createdAt,
+    );
+    await _openFile(context, timelineItem, titulo);
+  }
+
+  _ArchivoKind _inferFileKindFromExtension(String ext) {
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'webp':
+      case 'gif':
+      case 'bmp':
+      case 'heic':
+        return _ArchivoKind.image;
+      case 'mp4':
+      case 'mov':
+      case 'avi':
+      case 'mkv':
+      case 'webm':
+        return _ArchivoKind.video;
+      default:
+        return _ArchivoKind.file;
     }
   }
 
@@ -232,7 +573,9 @@ class DetalleEquipoPage extends StatelessWidget {
 
     try {
       if (lower.startsWith('gs://')) {
-        return await FirebaseStorage.instance.refFromURL(source).getDownloadURL();
+        return await FirebaseStorage.instance
+            .refFromURL(source)
+            .getDownloadURL();
       }
       return await FirebaseStorage.instance.ref(source).getDownloadURL();
     } catch (_) {
@@ -249,34 +592,53 @@ class _CategoryTileData {
 }
 
 class _CategoryTile extends StatelessWidget {
-  const _CategoryTile({required this.item});
+  const _CategoryTile({
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+    this.isCompact = false,
+  });
 
   final _CategoryTileData item;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final bool isCompact;
 
   static const Color _iconColor = Color(0xFF11CAA0);
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: Colors.white,
-      elevation: 2.8,
+      color: isSelected ? const Color(0xFFE0F7FA) : Colors.white,
+      elevation: isSelected ? 4.0 : 2.8,
       shadowColor: Colors.black26,
       margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: isSelected
+            ? const BorderSide(color: Color(0xFF0B5AA3), width: 2)
+            : BorderSide.none,
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () {},
+        onTap: onTap,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(item.icon, color: _iconColor, size: 28),
-            const SizedBox(height: 6),
-            Text(
-              item.label,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF23374D),
+            Icon(item.icon, color: _iconColor, size: isCompact ? 22 : 28),
+            SizedBox(height: isCompact ? 2 : 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2.0),
+              child: Text(
+                item.label,
+                style: TextStyle(
+                  fontSize: isCompact ? 10 : 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF23374D),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
               ),
             ),
           ],
@@ -292,7 +654,16 @@ class _ArchivoTile extends StatelessWidget {
   final _ArchivoListItem item;
   final VoidCallback onTap;
 
-  static const Color _leftStripeColor = Color(0xFF0B5AA3);
+  Color get _leftStripeColor {
+    switch (item.kind) {
+      case _ArchivoKind.file:
+        return const Color(0xFF0B5AA3); // Azul para PDFs/Documentos
+      case _ArchivoKind.image:
+        return const Color(0xFF11CAA0); // Verdeagua para imágenes
+      case _ArchivoKind.video:
+        return const Color(0xFFFFB300); // Ámbar/Amarillo para videos
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -301,15 +672,17 @@ class _ArchivoTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: item.kind == _ArchivoKind.file ? null : onTap,
+        onTap: onTap,
         child: Row(
           children: [
             Container(
               width: 4,
               height: 64,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: _leftStripeColor,
-                borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(12),
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -362,7 +735,9 @@ class _ArchivoListItem {
 
   String get _extensionLabel {
     final sourceBase = source.split('?').first;
-    final sourceExt = sourceBase.contains('.') ? sourceBase.split('.').last : '';
+    final sourceExt = sourceBase.contains('.')
+        ? sourceBase.split('.').last
+        : '';
     final ext = sourceExt.isEmpty ? '' : sourceExt.toUpperCase();
     if (kind == _ArchivoKind.video) return ext.isEmpty ? 'VIDEO' : ext;
     if (kind == _ArchivoKind.image) return ext.isEmpty ? 'IMAGEN' : ext;
@@ -374,16 +749,18 @@ class _ArchivoListItem {
       case _ArchivoKind.image:
         return Icons.image_rounded;
       case _ArchivoKind.video:
-        return Icons.play_circle_filled_rounded;
+        return Icons.videocam_rounded;
       case _ArchivoKind.file:
-        return Icons.description_rounded;
+        return Icons.picture_as_pdf_rounded;
     }
   }
 
   factory _ArchivoListItem.fromMedia(MediaItem media) {
     final title = media.caption.trim().isNotEmpty
         ? media.caption.trim()
-        : (media.name.trim().isNotEmpty ? media.name.trim() : 'Archivo sin titulo');
+        : (media.name.trim().isNotEmpty
+              ? media.name.trim()
+              : 'Archivo sin titulo');
 
     return _ArchivoListItem(
       id: media.id,
