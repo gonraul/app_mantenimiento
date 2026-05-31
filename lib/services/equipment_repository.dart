@@ -562,8 +562,35 @@ class EquipmentRepository {
   Future<void> deleteMediaFromEquipment({
     required String equipmentId,
     required String mediaSource,
+    String mediaDocId = '',
   }) async {
     final docRef = _firestore.collection(_topicsCollection).doc(equipmentId);
+    final sourceCandidates = <String>{mediaSource.trim()};
+
+    String? _extractStoragePathFromDownloadUrl(String value) {
+      final raw = value.trim();
+      if (raw.isEmpty) return null;
+      Uri uri;
+      try {
+        uri = Uri.parse(raw);
+      } catch (_) {
+        return null;
+      }
+
+      final marker = '/o/';
+      final path = uri.path;
+      final index = path.indexOf(marker);
+      if (index == -1) return null;
+
+      final encodedObjectPath = path.substring(index + marker.length);
+      if (encodedObjectPath.isEmpty) return null;
+      return Uri.decodeComponent(encodedObjectPath);
+    }
+
+    final extractedStoragePath = _extractStoragePathFromDownloadUrl(mediaSource);
+    if (extractedStoragePath != null && extractedStoragePath.isNotEmpty) {
+      sourceCandidates.add(extractedStoragePath);
+    }
 
     // Borrado en Storage con tolerancia a rutas legacy/url.
     try {
@@ -576,10 +603,18 @@ class EquipmentRepository {
             !lower.startsWith('https://') &&
             !lower.startsWith('gs://');
         if (isStoragePath) {
-          await _storage.ref(mediaSource).delete();
+          try {
+            await _storage.ref(mediaSource).delete();
+          } on FirebaseException catch (inner) {
+            if (inner.code != 'object-not-found') {
+              rethrow;
+            }
+          }
+        } else {
+          rethrow;
         }
       }
-    } catch (_) {
+    } catch (e) {
       final lower = mediaSource.toLowerCase();
       final isStoragePath =
           !lower.startsWith('http://') &&
@@ -587,36 +622,149 @@ class EquipmentRepository {
           !lower.startsWith('gs://');
       if (isStoragePath) {
         await _storage.ref(mediaSource).delete();
+      } else {
+        rethrow;
       }
     }
 
-    await docRef.update({
-      'archivos': FieldValue.arrayRemove([mediaSource]),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await docRef.update({
+        'archivos': FieldValue.arrayRemove([mediaSource]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (e) {
+      if (e.code != 'not-found') {
+        rethrow;
+      }
+    }
 
     final mediaRef = docRef.collection('media');
+    final refsToDelete = <String, DocumentReference<Map<String, dynamic>>>{};
+
+    final normalizedDocId = mediaDocId.trim();
+    if (normalizedDocId.isNotEmpty) {
+      refsToDelete['media:$normalizedDocId'] = mediaRef.doc(normalizedDocId);
+    }
+
     final byUrl = await mediaRef.where('url', isEqualTo: mediaSource).get();
     final byStoragePath = await mediaRef
         .where('storagePath', isEqualTo: mediaSource)
         .get();
+    final bySource = await mediaRef.where('source', isEqualTo: mediaSource).get();
 
-    final mediaDocs = <String, DocumentReference<Map<String, dynamic>>>{};
     for (final doc in byUrl.docs) {
-      mediaDocs[doc.id] = doc.reference;
+      refsToDelete['media:${doc.id}'] = doc.reference;
     }
     for (final doc in byStoragePath.docs) {
-      mediaDocs[doc.id] = doc.reference;
+      refsToDelete['media:${doc.id}'] = doc.reference;
+    }
+    for (final doc in bySource.docs) {
+      refsToDelete['media:${doc.id}'] = doc.reference;
     }
 
-    for (final ref in mediaDocs.values) {
+    final eventosSnapshot = await docRef.collection('eventos').get();
+    for (final eventDoc in eventosSnapshot.docs) {
+      final archivosRef = eventDoc.reference.collection('archivos');
+
+      if (normalizedDocId.isNotEmpty) {
+        refsToDelete['event:${eventDoc.id}:$normalizedDocId'] =
+            archivosRef.doc(normalizedDocId);
+      }
+
+      final eventByUrl = await archivosRef
+          .where('url', isEqualTo: mediaSource)
+          .get();
+      final eventByStoragePath = await archivosRef
+          .where('storagePath', isEqualTo: mediaSource)
+          .get();
+      final eventBySource = await archivosRef
+          .where('source', isEqualTo: mediaSource)
+          .get();
+
+      for (final doc in eventByUrl.docs) {
+        refsToDelete['event:${eventDoc.id}:${doc.id}'] = doc.reference;
+      }
+      for (final doc in eventByStoragePath.docs) {
+        refsToDelete['event:${eventDoc.id}:${doc.id}'] = doc.reference;
+      }
+      for (final doc in eventBySource.docs) {
+        refsToDelete['event:${eventDoc.id}:${doc.id}'] = doc.reference;
+      }
+    }
+
+    var deletedAnyDoc = false;
+    Object? firstDeleteError;
+    for (final ref in refsToDelete.values) {
       try {
+        final snapshot = await ref.get();
+        if (!snapshot.exists) {
+          continue;
+        }
+
+        final data = snapshot.data();
+        if (data != null) {
+          final url = (data['url'] as String?)?.trim() ?? '';
+          final storagePath = (data['storagePath'] as String?)?.trim() ?? '';
+          final source = (data['source'] as String?)?.trim() ?? '';
+          if (url.isNotEmpty) sourceCandidates.add(url);
+          if (storagePath.isNotEmpty) sourceCandidates.add(storagePath);
+          if (source.isNotEmpty) sourceCandidates.add(source);
+
+          final fromUrl = _extractStoragePathFromDownloadUrl(url);
+          if (fromUrl != null && fromUrl.isNotEmpty) {
+            sourceCandidates.add(fromUrl);
+          }
+          final fromSource = _extractStoragePathFromDownloadUrl(source);
+          if (fromSource != null && fromSource.isNotEmpty) {
+            sourceCandidates.add(fromSource);
+          }
+        }
+
         await ref.delete();
+        deletedAnyDoc = true;
       } on FirebaseException catch (e) {
         if (e.code != 'object-not-found') {
-          rethrow;
+          firstDeleteError ??= e;
         }
       }
+    }
+
+    final parentSnapshot = await docRef.get();
+    final parentData = parentSnapshot.data();
+    final rawArchivos = parentData == null ? null : parentData['archivos'];
+    final legacyArchivos = rawArchivos is List
+        ? rawArchivos
+              .whereType<String>()
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList()
+        : <String>[];
+
+    final sanitizedCandidates = sourceCandidates
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toSet();
+
+    final filteredLegacy = legacyArchivos
+        .where((entry) => !sanitizedCandidates.contains(entry))
+        .toList();
+    final removedFromLegacy = legacyArchivos.length != filteredLegacy.length;
+
+    if (removedFromLegacy) {
+      await docRef.update({
+        'archivos': filteredLegacy,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (!deletedAnyDoc && !removedFromLegacy && firstDeleteError != null) {
+      throw firstDeleteError!;
+    }
+
+    if (!deletedAnyDoc && !removedFromLegacy) {
+      debugPrint(
+        'deleteMediaFromEquipment: no se encontraron referencias en Firestore para $mediaSource',
+      );
     }
   }
 

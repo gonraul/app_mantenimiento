@@ -86,10 +86,12 @@ class TaskService {
   Future<void> deleteMediaFromEquipment({
     required String equipmentId,
     required String mediaSource,
+    String mediaDocId = '',
   }) {
     return _repository.deleteMediaFromEquipment(
       equipmentId: equipmentId,
       mediaSource: mediaSource,
+      mediaDocId: mediaDocId,
     );
   }
 

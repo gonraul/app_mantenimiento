@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
@@ -257,6 +259,10 @@ class _DetalleEquipoPageState extends State<DetalleEquipoPage> {
                                         item,
                                         equipoNombre,
                                       ),
+                                      onLongPress: () =>
+                                          _confirmarYEliminarArchivo(item),
+                                      onDelete: () =>
+                                          _confirmarYEliminarArchivo(item),
                                     );
                                   },
                                 ),
@@ -360,6 +366,78 @@ class _DetalleEquipoPageState extends State<DetalleEquipoPage> {
         ),
       );
     }
+  }
+
+  Future<void> eliminarArchivo(
+    String equipoId,
+    String mediaDocId,
+    String fileUrl,
+  ) async {
+    await _repository.deleteMediaFromEquipment(
+      equipmentId: equipoId,
+      mediaSource: fileUrl,
+      mediaDocId: mediaDocId,
+    );
+  }
+
+  Future<void> _confirmarYEliminarArchivo(_ArchivoListItem item) async {
+    final shouldDelete = await _mostrarBannerConfirmacion(item.displayName);
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    try {
+      await eliminarArchivo(widget.equipmentId, item.id, item.source);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Archivo eliminado correctamente.')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      debugPrint('Error al eliminar archivo: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo eliminar el archivo: $e')),
+      );
+    }
+  }
+
+  Future<bool> _mostrarBannerConfirmacion(String displayName) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentMaterialBanner();
+
+    final completer = Completer<bool>();
+
+    void resolve(bool value) {
+      if (completer.isCompleted) {
+        return;
+      }
+      completer.complete(value);
+      messenger.hideCurrentMaterialBanner();
+    }
+
+    messenger.showMaterialBanner(
+      MaterialBanner(
+        backgroundColor: const Color(0xFFFFECEA),
+        leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+        content: Text('¿Querés eliminar "$displayName"?'),
+        actions: [
+          TextButton(
+            onPressed: () => resolve(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => resolve(true),
+            child: const Text(
+              'Aceptar',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return completer.future;
   }
 
   Future<void> _openTimelineDocument(
@@ -649,10 +727,17 @@ class _CategoryTile extends StatelessWidget {
 }
 
 class _ArchivoTile extends StatelessWidget {
-  const _ArchivoTile({required this.item, required this.onTap});
+  const _ArchivoTile({
+    required this.item,
+    required this.onTap,
+    required this.onDelete,
+    this.onLongPress,
+  });
 
   final _ArchivoListItem item;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final VoidCallback? onLongPress;
 
   Color get _leftStripeColor {
     switch (item.kind) {
@@ -673,6 +758,7 @@ class _ArchivoTile extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Row(
           children: [
             Container(
@@ -700,6 +786,11 @@ class _ArchivoTile extends StatelessWidget {
                 ),
                 subtitle: Text(item.meta, style: const TextStyle(fontSize: 12)),
               ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              tooltip: 'Eliminar archivo',
+              onPressed: onDelete,
             ),
           ],
         ),

@@ -59,17 +59,17 @@ service cloud.firestore {
     match /equipos/{equipoId} {
       allow read: if isSignedIn();
       allow create, update: if isSignedIn() && isValidEquipoData();
-      allow delete: if false;
+      allow delete: if isSignedIn();
 
       match /eventos/{eventoId} {
         allow read: if isSignedIn();
         allow create, update: if isSignedIn() && isValidEventoData();
-        allow delete: if false;
+        allow delete: if isSignedIn();
 
         match /archivos/{archivoId} {
           allow read: if isSignedIn();
           allow create, update: if isSignedIn() && isValidArchivoData();
-          allow delete: if false;
+          allow delete: if isSignedIn();
         }
       }
     }

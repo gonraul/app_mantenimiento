@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/equipment.dart';
@@ -7,6 +9,8 @@ import '../use_cases/search_equipments_use_case.dart';
 class BusquedaViewModel extends ChangeNotifier {
   final GetEquipmentsStreamUseCase _getEquipmentsUseCase;
   final SearchEquipmentsUseCase _searchUseCase;
+  StreamSubscription<List<Equipment>>? _subscription;
+  bool _isDisposed = false;
 
   BusquedaViewModel({
     required GetEquipmentsStreamUseCase getEquipmentsUseCase,
@@ -28,28 +32,31 @@ class BusquedaViewModel extends ChangeNotifier {
 
   void _initializeStream() {
     _isLoading = true;
-    notifyListeners();
+    _safeNotifyListeners();
 
-    _getEquipmentsUseCase().listen(
+    _subscription = _getEquipmentsUseCase().listen(
       (equipments) {
+        if (_isDisposed) return;
         _allEquipments = equipments;
         _applySearch();
         _isLoading = false;
         _errorMessage = null;
-        notifyListeners();
+        _safeNotifyListeners();
       },
       onError: (error) {
+        if (_isDisposed) return;
         _isLoading = false;
         _errorMessage = error.toString();
-        notifyListeners();
+        _safeNotifyListeners();
       },
     );
   }
 
   void setSearchTerm(String term) {
+    if (_isDisposed) return;
     _searchTerm = term;
     _applySearch();
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   void _applySearch() {
@@ -61,5 +68,21 @@ class BusquedaViewModel extends ChangeNotifier {
         term: _searchTerm,
       );
     }
+  }
+
+  void _safeNotifyListeners() {
+    if (_isDisposed) return;
+    try {
+      notifyListeners();
+    } catch (_) {
+      // Evitar de forma segura fallos si el ChangeNotifier ya fue dispuesto externamente o por el Engine en Web
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _subscription?.cancel();
+    super.dispose();
   }
 }
